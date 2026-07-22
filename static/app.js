@@ -308,6 +308,15 @@ function renderKPIRow(curr, prev) {
           ? deltaHTML(closeRate - prev.totals.closeRate)
           : "",
     },
+    {
+      label: "Total Closed Rate",
+      big: curr.totals.totalClosedRate !== null ? `${curr.totals.totalClosedRate}%` : "—",
+      small: `${curr.totals.closedLeads} closed / ${qualified} qualified`,
+      delta:
+        prev && curr.totals.totalClosedRate !== null && prev.totals.totalClosedRate !== null
+          ? deltaHTML(curr.totals.totalClosedRate - prev.totals.totalClosedRate)
+          : "",
+    },
   ];
 
   items.forEach((item) => {

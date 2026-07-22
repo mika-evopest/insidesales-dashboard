@@ -29,7 +29,6 @@ REPS = [
 CLOSED_DATE_FIELD_ID = "y2AEQ5nyUzxhLLLnG6bx"
 QUALIFICATION_STATUS_FIELD_ID = "SYrPZw5WGIbpPYuiDaBx"
 FIRST_TOUCH_QUALIFIER_FIELD_ID = "bs8z28NC8AFOaTofqXMz"
-SALES_REP_FIELD_ID = "LWLa9vQ7KLP3UuV5MMzc"
 POWER_DIALER_ATTEMPT_FIELD_ID = "vNjCVqQ3NiMGBQ4mHehJ"
 LEAD_STAGE_FIELD_ID = "dt44fTl1UU9rY77EyAvb"
 
@@ -295,7 +294,7 @@ def rep_qualified_leads_count(contacts, rep_name, start, end):
         status = custom_field_value(c.get("customFields"), QUALIFICATION_STATUS_FIELD_ID)
         if status != "Qualified":
             continue
-        reps = custom_field_value(c.get("customFields"), SALES_REP_FIELD_ID)
+        reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
         reps = reps if isinstance(reps, list) else ([reps] if reps else [])
         if rep_name in reps:
             count += 1
@@ -314,6 +313,22 @@ def count_qualified_leads(contacts, start, end):
             continue
         status = custom_field_value(c.get("customFields"), QUALIFICATION_STATUS_FIELD_ID)
         if status == "Qualified":
+            count += 1
+    return count
+
+
+def count_closed_leads(contacts, start, end):
+    # Cohort-consistent version of "closed": anchored to the lead's own
+    # creation date (Lead Stage right now), not the opportunity's Closed Date —
+    # avoids mixing leads added today with deals that closed today but were
+    # created earlier (the mismatch behind the Sergio 150%/333% close rates).
+    count = 0
+    for c in contacts:
+        added = local_date(parse_date(c.get("dateAdded")))
+        if not in_range(added, start, end):
+            continue
+        stage = custom_field_value(c.get("customFields"), LEAD_STAGE_FIELD_ID)
+        if stage == "Closed/Won":
             count += 1
     return count
 
@@ -363,6 +378,8 @@ def compute_period_metrics(start, end, contacts):
     total_leads = count_leads(contacts, start, end)
     total_qualified = count_qualified_leads(contacts, start, end)
     overall_close_rate = round(total_closed_count / total_qualified * 100, 1) if total_qualified else None
+    total_closed_leads = count_closed_leads(contacts, start, end)
+    total_closed_rate = round(total_closed_leads / total_qualified * 100, 1) if total_qualified else None
 
     return {
         "reps": reps_out,
@@ -372,6 +389,8 @@ def compute_period_metrics(start, end, contacts):
             "leads": total_leads,
             "qualifiedLeads": total_qualified,
             "closeRate": overall_close_rate,
+            "closedLeads": total_closed_leads,
+            "totalClosedRate": total_closed_rate,
             "sources": count_sources(contacts, start, end),
         },
     }
