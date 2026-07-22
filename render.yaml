@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: insidesales-evopest
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python3 server.py"
+    envVars:
+      - key: HIGHLEVEL_API_KEY
+        sync: false
+      - key: HIGHLEVEL_LOCATION_ID
+        sync: false

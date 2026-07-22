@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Evo Pest - Inside Sales Dashboard</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Evo Pest - Inside Sales Dashboard</h1>
+      <nav class="view-tabs">
+        <button data-view="sales" class="view-tab active">Sales Rep Dashboard</button>
+        <button data-view="marketing" class="view-tab">Marketing Campaign Dashboard</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div id="view-sales">
+      <div class="range-controls">
+        <button data-range="today" class="range-btn">Today</button>
+        <button data-range="week" class="range-btn">This Week</button>
+        <button data-range="month" class="range-btn">This Month</button>
+        <button data-range="quarter" class="range-btn">This Quarter</button>
+        <button data-range="year" class="range-btn">This Year</button>
+        <button data-range="custom" class="range-btn">Custom</button>
+        <div id="custom-inputs" class="custom-inputs hidden">
+          <input type="date" id="start-date" />
+          <span>to</span>
+          <input type="date" id="end-date" />
+          <button id="apply-custom">Apply</button>
+        </div>
+        <span id="range-label" class="range-label"></span>
+        <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
+      </div>
+
+      <label class="compare-toggle">
+        <input type="checkbox" id="compare-checkbox" checked />
+        Compare to previous period
+      </label>
+
+      <section>
+        <h2>Overview</h2>
+        <div id="kpi-row" class="kpi-row"></div>
+      </section>
+
+      <section>
+        <h2>Sold Services by Sales Rep</h2>
+        <div id="sold-services-chart" class="bar-wrap"></div>
+      </section>
+
+      <section>
+        <h2>Closed Deal Value by Rep</h2>
+        <div id="sales-share" class="bar-wrap"></div>
+      </section>
+
+      <section>
+        <h2>Closed-Won Sales by Rep</h2>
+        <div id="sales-cards" class="cards"></div>
+      </section>
+
+      <section>
+        <h2>Qualified Leads by Rep</h2>
+        <div id="qualified-leads-chart" class="bar-wrap"></div>
+      </section>
+
+      <section>
+        <h2>Close Rate by Rep</h2>
+        <p class="chart-caveat">"Qualification Status" was only added to HighLevel on 2026-07-14 — close rate will look inflated for reps with closed deals from before that date until leads are tagged retroactively or tagging catches up.</p>
+        <div id="close-rate-chart" class="bar-wrap"></div>
+      </section>
+
+      <section>
+        <h2>Rep Detail</h2>
+        <div id="perf-table-wrap"></div>
+      </section>
+
+      <p id="error-banner" class="error hidden"></p>
+    </div>
+
+    <div id="view-marketing" class="hidden">
+      <p class="placeholder-note">Marketing campaign data isn't wired up yet — let me know what you'd like to see here.</p>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
