@@ -34,6 +34,7 @@
         </div>
         <span id="range-label" class="range-label"></span>
         <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
+        <button id="refresh-data" class="range-btn">Refresh Data</button>
       </div>
 
       <label class="compare-toggle">
@@ -43,7 +44,19 @@
 
       <section>
         <h2>Overview</h2>
-        <div id="kpi-row" class="kpi-row"></div>
+        <div id="kpi-row-top" class="kpi-row"></div>
+
+        <h3 class="subheading">Leads Today</h3>
+        <div class="side-by-side">
+          <div id="kpi-row" class="kpi-row"></div>
+          <div id="sources-chart" class="bar-wrap"></div>
+        </div>
+
+        <h3 class="subheading">Power Dialer Today</h3>
+        <div id="power-dialer-row" class="kpi-row">
+          <div class="kpi-card"><div class="kpi-label">Leads Called</div><div class="kpi-value">…</div></div>
+          <div class="kpi-card"><div class="kpi-label">Leads Closed</div><div class="kpi-value">…</div></div>
+        </div>
       </section>
 
       <section>

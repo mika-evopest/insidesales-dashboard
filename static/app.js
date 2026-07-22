@@ -114,6 +114,73 @@ document.getElementById("apply-custom").addEventListener("click", () => {
 
 document.getElementById("compare-checkbox").addEventListener("change", loadData);
 
+document.getElementById("refresh-data").addEventListener("click", async () => {
+  await fetch("/api/refresh");
+  loadData();
+});
+
+function powerDialerCloseRate(d) {
+  return d.called ? Math.round((d.closed / d.called) * 1000) / 10 : null;
+}
+
+async function loadPowerDialer(start, end) {
+  const el = document.getElementById("power-dialer-row");
+  const compareEnabled = document.getElementById("compare-checkbox").checked;
+  try {
+    let curr;
+    let prev = null;
+    if (compareEnabled) {
+      const prevRange = previousPeriodFor(currentRangeKey, currentRange.start, currentRange.end);
+      const [currRes, prevRes] = await Promise.all([
+        fetchJSON(`/api/power-dialer?start=${start}&end=${end}`),
+        fetchJSON(`/api/power-dialer?start=${fmtDate(prevRange.start)}&end=${fmtDate(prevRange.end)}`),
+      ]);
+      curr = currRes;
+      prev = prevRes;
+    } else {
+      curr = await fetchJSON(`/api/power-dialer?start=${start}&end=${end}`);
+    }
+
+    const missingNote =
+      curr.missingDays && curr.missingDays.length
+        ? `<div class="kpi-small">${curr.missingDays.length} day(s) in range not tracked yet</div>`
+        : "";
+    const closeRate = powerDialerCloseRate(curr);
+    const prevCloseRate = prev ? powerDialerCloseRate(prev) : null;
+
+    const calledDelta = prev ? deltaHTML(pctChange(curr.called, prev.called)) : "";
+    const closedDelta = prev ? deltaHTML(pctChange(curr.closed, prev.closed)) : "";
+    const contractDelta = prev ? deltaHTML(pctChange(curr.contractValue, prev.contractValue)) : "";
+    const closeRateDelta = prev && closeRate !== null && prevCloseRate !== null ? deltaHTML(closeRate - prevCloseRate) : "";
+
+    el.innerHTML = `
+      <div class="kpi-card">
+        <div class="kpi-label">Leads Called</div>
+        <div class="kpi-value">${curr.called}</div>
+        ${calledDelta ? `<div class="kpi-delta">${calledDelta} vs previous period</div>` : ""}
+        ${missingNote}
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Leads Closed</div>
+        <div class="kpi-value">${curr.closed}</div>
+        ${closedDelta ? `<div class="kpi-delta">${closedDelta} vs previous period</div>` : ""}
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Contract Amount</div>
+        <div class="kpi-value">${currency(curr.contractValue)}</div>
+        ${contractDelta ? `<div class="kpi-delta">${contractDelta} vs previous period</div>` : ""}
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Closed Rate</div>
+        <div class="kpi-value">${closeRate !== null ? closeRate + "%" : "—"}</div>
+        ${closeRateDelta ? `<div class="kpi-delta">${closeRateDelta} vs previous period</div>` : ""}
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="kpi-card"><div class="kpi-label">Power Dialer</div><div class="kpi-small">${e.message}</div></div>`;
+  }
+}
+
 document.querySelectorAll(".view-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".view-tab").forEach((t) => t.classList.remove("active"));
@@ -140,13 +207,12 @@ function pctChange(curr, prev) {
   return ((curr - prev) / prev) * 100;
 }
 
-function deltaHTML(change, opts = {}) {
+function deltaHTML(change) {
   if (change === null || change === undefined || !isFinite(change)) return "";
   const rounded = Math.round(change * 10) / 10;
   const cls = rounded > 0 ? "up" : rounded < 0 ? "down" : "flat";
   const arrow = rounded > 0 ? "▲" : rounded < 0 ? "▼" : "▬";
-  const suffix = opts.pts ? " pts" : "%";
-  return `<span class="delta ${cls}">${arrow} ${Math.abs(rounded)}${suffix}</span>`;
+  return `<span class="delta ${cls}">${arrow} ${Math.abs(rounded)}%</span>`;
 }
 
 function withPrev(currReps, prevReps) {
@@ -163,6 +229,35 @@ function pctLabel(v) {
 
 function rate(numerator, denominator) {
   return denominator ? (numerator / denominator) * 100 : null;
+}
+
+function renderTopKPIRow(curr, prev) {
+  const el = document.getElementById("kpi-row-top");
+  el.innerHTML = "";
+  const items = [
+    {
+      label: "Total Sales",
+      big: `${curr.totals.closedCount}`,
+      small: "",
+      delta: prev ? deltaHTML(pctChange(curr.totals.closedCount, prev.totals.closedCount)) : "",
+    },
+    {
+      label: "Contract Value",
+      big: currency(curr.totals.closedValue),
+      small: "",
+      delta: prev ? deltaHTML(pctChange(curr.totals.closedValue, prev.totals.closedValue)) : "",
+    },
+  ];
+  items.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "kpi-card";
+    card.innerHTML = `
+      <div class="kpi-label">${item.label}</div>
+      <div class="kpi-value">${item.big}</div>
+      ${item.delta ? `<div class="kpi-delta">${item.delta} vs previous period</div>` : ""}
+    `;
+    el.appendChild(card);
+  });
 }
 
 function renderKPIRow(curr, prev) {
@@ -182,21 +277,21 @@ function renderKPIRow(curr, prev) {
   const items = [
     {
       label: "Leads",
-      big: "100%",
-      small: `${leads} leads`,
+      big: `${leads}`,
+      small: "",
       delta: prev ? deltaHTML(pctChange(leads, prev.totals.leads)) : "",
     },
     {
       label: "Qualified Leads",
       big: pctLabel(qualRate),
       small: `${qualified} qualified`,
-      delta: prev && qualRate !== null && prevQualRate !== null ? deltaHTML(qualRate - prevQualRate, { pts: true }) : "",
+      delta: prev && qualRate !== null && prevQualRate !== null ? deltaHTML(qualRate - prevQualRate) : "",
     },
     {
       label: "Sales",
       big: pctLabel(saleRate),
       small: `${sales} sales`,
-      delta: prev && saleRate !== null && prevSaleRate !== null ? deltaHTML(saleRate - prevSaleRate, { pts: true }) : "",
+      delta: prev && saleRate !== null && prevSaleRate !== null ? deltaHTML(saleRate - prevSaleRate) : "",
     },
     {
       label: "Contract Value",
@@ -225,6 +320,19 @@ function renderKPIRow(curr, prev) {
       ${item.delta ? `<div class="kpi-delta">${item.delta} vs previous period</div>` : ""}
     `;
     el.appendChild(card);
+  });
+}
+
+function renderSources(curr, prev) {
+  const order = ["Meta", "Inbound", "Website", "Other"];
+  const items = order.map((name) => ({
+    name,
+    _prev: prev ? { count: prev.totals.sources[name] || 0 } : null,
+    count: curr.totals.sources[name] || 0,
+  }));
+  renderBarChart("sources-chart", items, {
+    valueOf: (r) => r.count,
+    formatValue: (item) => `${item.value}`,
   });
 }
 
@@ -391,24 +499,27 @@ async function loadData() {
   const end = fmtDate(currentRange.end);
   const compareEnabled = document.getElementById("compare-checkbox").checked;
 
+  loadPowerDialer(start, end); // fire independently — can be slow on a cold cache, shouldn't block the rest
+
   try {
     let curr;
     let prev = null;
     if (compareEnabled) {
       const prevRange = previousPeriodFor(currentRangeKey, currentRange.start, currentRange.end);
-      const [currRes, prevRes] = await Promise.all([
-        fetchJSON(`/api/performance?start=${start}&end=${end}`),
-        fetchJSON(`/api/performance?start=${fmtDate(prevRange.start)}&end=${fmtDate(prevRange.end)}`),
-      ]);
-      curr = currRes;
-      prev = prevRes;
+      const combined = await fetchJSON(
+        `/api/performance-compare?start=${start}&end=${end}&prevStart=${fmtDate(prevRange.start)}&prevEnd=${fmtDate(prevRange.end)}`
+      );
+      curr = combined.current;
+      prev = combined.previous;
     } else {
       curr = await fetchJSON(`/api/performance?start=${start}&end=${end}`);
     }
 
     if (token !== loadToken) return; // superseded by a newer request
 
+    renderTopKPIRow(curr, prev);
     renderKPIRow(curr, prev);
+    renderSources(curr, prev);
     renderSales(curr, prev);
 
     const repsWithPrev = withPrev(curr.reps, prev ? prev.reps : null);
@@ -443,6 +554,6 @@ async function loadData() {
   }
 }
 
-// default to this week (to-date) on load
-setActiveButton("week");
-applyRange("week", startOfWeek(new Date()), new Date());
+// default to today on load
+setActiveButton("today");
+applyRange("today", new Date(), new Date());

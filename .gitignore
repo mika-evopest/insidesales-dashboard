@@ -2,3 +2,4 @@
 .env.save
 __pycache__/
 .DS_Store
+power_dialer_history.json
