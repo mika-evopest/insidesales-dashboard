@@ -11,92 +11,139 @@
     <div class="container">
       <h1>Evo Pest - Inside Sales Dashboard</h1>
       <nav class="view-tabs">
-        <button data-view="sales" class="view-tab active">Sales Rep Dashboard</button>
+        <button data-view="sales" class="view-tab">Sales Team Dashboard</button>
+        <button data-view="leaderboard" class="view-tab active">Leaderboard</button>
         <button data-view="marketing" class="view-tab">Marketing Campaign Dashboard</button>
       </nav>
     </div>
   </header>
 
   <main>
-    <div id="view-sales">
-      <div class="range-controls">
-        <button data-range="today" class="range-btn">Today</button>
-        <button data-range="week" class="range-btn">This Week</button>
-        <button data-range="month" class="range-btn">This Month</button>
-        <button data-range="quarter" class="range-btn">This Quarter</button>
-        <button data-range="year" class="range-btn">This Year</button>
-        <button data-range="custom" class="range-btn">Custom</button>
-        <div id="custom-inputs" class="custom-inputs hidden">
-          <input type="date" id="start-date" />
-          <span>to</span>
-          <input type="date" id="end-date" />
-          <button id="apply-custom">Apply</button>
+    <div id="view-sales" class="hidden">
+      <div class="toolbar">
+        <div class="range-controls">
+          <button data-range="today" class="range-btn">Today</button>
+          <button data-range="yesterday" class="range-btn">Yesterday</button>
+          <button data-range="week" class="range-btn">This Week</button>
+          <button data-range="month" class="range-btn">This Month</button>
+          <button data-range="quarter" class="range-btn">This Quarter</button>
+          <button data-range="year" class="range-btn">This Year</button>
+          <span class="custom-range-wrap">
+            <button data-range="custom" class="range-btn">Custom</button>
+            <div id="calendar-popup" class="calendar-popup hidden">
+              <div class="calendar-header">
+                <button id="cal-prev-month" class="calendar-nav" type="button">&lsaquo;</button>
+                <span id="cal-month-label"></span>
+                <button id="cal-next-month" class="calendar-nav" type="button">&rsaquo;</button>
+              </div>
+              <div class="calendar-weekdays">
+                <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+              </div>
+              <div id="calendar-grid" class="calendar-grid"></div>
+              <div id="calendar-hint" class="calendar-hint">Pick a start date</div>
+            </div>
+          </span>
+          <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
+          <button id="refresh-data" class="range-btn">Refresh Data</button>
         </div>
-        <span id="range-label" class="range-label"></span>
-        <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
-        <button id="refresh-data" class="range-btn">Refresh Data</button>
+
+        <label class="compare-toggle">
+          <input type="checkbox" id="compare-checkbox" checked />
+          Compare to previous period
+        </label>
       </div>
 
-      <label class="compare-toggle">
-        <input type="checkbox" id="compare-checkbox" checked />
-        Compare to previous period
-      </label>
-
-      <section>
-        <h2>Overview</h2>
-        <div id="kpi-row-top" class="kpi-row"></div>
-
-        <h3 class="subheading">Leads Today</h3>
-        <div class="side-by-side">
-          <div id="kpi-row" class="kpi-row"></div>
-          <div id="sources-chart" class="bar-wrap"></div>
+      <div class="dashboard-grid">
+        <div class="widget widget-wide">
+          <h2>Overview</h2>
+          <div id="kpi-row-top" class="kpi-row"></div>
         </div>
 
-        <h3 class="subheading">Power Dialer Today</h3>
-        <div id="power-dialer-row" class="kpi-row">
-          <div class="kpi-card"><div class="kpi-label">Leads Called</div><div class="kpi-value">…</div></div>
-          <div class="kpi-card"><div class="kpi-label">Leads Closed</div><div class="kpi-value">…</div></div>
+        <div class="widget widget-wide">
+          <h2>Leads</h2>
+          <div class="widget-split">
+            <div id="kpi-row" class="kpi-row"></div>
+            <div class="widget-split-col">
+              <h3 class="chart-label">Lead Sources</h3>
+              <div id="sources-chart" class="bar-wrap"></div>
+            </div>
+          </div>
         </div>
-      </section>
 
-      <section>
-        <h2>Sold Services by Sales Rep</h2>
-        <div id="sold-services-chart" class="bar-wrap"></div>
-      </section>
+        <div class="widget widget-wide">
+          <h2>Powerdialer</h2>
+          <div id="power-dialer-row" class="kpi-row">
+            <div class="kpi-card"><div class="kpi-label">Leads Called</div><div class="kpi-value">…</div></div>
+            <div class="kpi-card"><div class="kpi-label">Leads Closed</div><div class="kpi-value">…</div></div>
+          </div>
+        </div>
 
-      <section>
-        <h2>Closed Deal Value by Rep</h2>
-        <div id="sales-share" class="bar-wrap"></div>
-      </section>
+        <div class="widget">
+          <h2>Sold Contracts by Sales Rep</h2>
+          <div id="sold-services-chart" class="bar-wrap"></div>
+        </div>
 
-      <section>
-        <h2>Closed-Won Sales by Rep</h2>
-        <div id="sales-cards" class="cards"></div>
-      </section>
+        <div class="widget">
+          <h2>Sold Contract Value by Sales Rep</h2>
+          <div id="sales-share" class="bar-wrap"></div>
+        </div>
 
-      <section>
-        <h2>Qualified Leads by Rep</h2>
-        <div id="qualified-leads-chart" class="bar-wrap"></div>
-      </section>
+        <div class="widget">
+          <h2>Sold Contracts by Lead Source</h2>
+          <div id="closed-sources-chart" class="bar-wrap"></div>
+        </div>
 
-      <section>
-        <h2>Close Rate by Rep</h2>
-        <p class="chart-caveat">"Qualification Status" was only added to HighLevel on 2026-07-14 — close rate will look inflated for reps with closed deals from before that date until leads are tagged retroactively or tagging catches up.</p>
-        <div id="close-rate-chart" class="bar-wrap"></div>
-      </section>
+        <div class="dashboard-row">
+          <div class="widget">
+            <h2>Qualified Leads by Rep</h2>
+            <div id="qualified-leads-chart" class="bar-wrap"></div>
+          </div>
 
-      <section>
-        <h2>Rep Detail</h2>
-        <div id="perf-table-wrap"></div>
-      </section>
+          <div class="widget">
+            <h2>Closed Rate by Sales Rep</h2>
+            <div id="close-rate-chart" class="bar-wrap"></div>
+          </div>
+        </div>
+      </div>
 
       <p id="error-banner" class="error hidden"></p>
+    </div>
+
+    <div id="view-leaderboard">
+      <div class="dashboard-grid">
+        <div class="widget widget-wide leaderboard-today-widget">
+          <h2>Today</h2>
+          <div id="leaderboard-today-body"></div>
+        </div>
+
+        <div class="dashboard-row">
+          <div class="widget">
+            <h2>This Week</h2>
+            <div id="leaderboard-week-body"></div>
+          </div>
+
+          <div class="widget">
+            <h2>This Month</h2>
+            <div id="leaderboard-month-body"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="view-marketing" class="hidden">
       <p class="placeholder-note">Marketing campaign data isn't wired up yet — let me know what you'd like to see here.</p>
     </div>
   </main>
+
+  <div id="rep-deals-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="rep-deals-title"></h3>
+        <button id="rep-deals-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="rep-deals-body" class="modal-body"></div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

@@ -1,5 +1,8 @@
 function fmtDate(d) {
-  return d.toISOString().slice(0, 10);
+  // Business day is Central Time (matches server's BUSINESS_TZ) — not the
+  // viewer's local clock or UTC, so "Today" clicked in the evening doesn't
+  // roll over to tomorrow's date.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago" }).format(d);
 }
 
 function addDays(d, n) {
@@ -34,6 +37,10 @@ function startOfYear(d) {
 function previousPeriodFor(key, start, end) {
   switch (key) {
     case "today": {
+      const y = addDays(start, -1);
+      return { start: y, end: y };
+    }
+    case "yesterday": {
       const y = addDays(start, -1);
       return { start: y, end: y };
     }
@@ -82,34 +89,120 @@ function setActiveButton(range) {
 function applyRange(rangeKey, start, end) {
   currentRangeKey = rangeKey;
   currentRange = { start, end };
-  document.getElementById("range-label").textContent = `${fmtDate(start)} to ${fmtDate(end)}`;
   loadData();
 }
 
+// --- Custom range calendar popup ---
+let calendarViewDate = new Date();
+let calSelStart = null;
+let calSelEnd = null;
+
+function isSameDay(a, b) {
+  return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function showCalendarPopup() {
+  calendarViewDate = calSelStart ? new Date(calSelStart) : new Date();
+  document.getElementById("calendar-popup").classList.remove("hidden");
+  renderCalendar();
+}
+
+function hideCalendarPopup() {
+  document.getElementById("calendar-popup").classList.add("hidden");
+}
+
+function renderCalendar() {
+  const label = document.getElementById("cal-month-label");
+  const grid = document.getElementById("calendar-grid");
+  const hint = document.getElementById("calendar-hint");
+  const year = calendarViewDate.getFullYear();
+  const month = calendarViewDate.getMonth();
+
+  label.textContent = calendarViewDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  if (!calSelStart) hint.textContent = "Pick a start date";
+  else if (!calSelEnd) hint.textContent = "Pick an end date";
+  else hint.textContent = `${fmtDate(calSelStart)} to ${fmtDate(calSelEnd)}`;
+
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = addDays(firstOfMonth, -firstOfMonth.getDay());
+  const today = new Date();
+
+  grid.innerHTML = "";
+  for (let i = 0; i < 42; i++) {
+    const day = addDays(gridStart, i);
+    const cell = document.createElement("div");
+    cell.className = "calendar-day";
+    cell.textContent = day.getDate();
+
+    const outside = day.getMonth() !== month;
+    if (outside) cell.classList.add("cal-outside");
+    if (isSameDay(day, today)) cell.classList.add("cal-today");
+    if (isSameDay(day, calSelStart)) cell.classList.add("cal-range-start");
+    if (isSameDay(day, calSelEnd)) cell.classList.add("cal-range-end");
+    if (calSelStart && calSelEnd && day > calSelStart && day < calSelEnd) cell.classList.add("cal-in-range");
+
+    if (!outside) {
+      cell.addEventListener("click", () => selectCalendarDay(day));
+    }
+    grid.appendChild(cell);
+  }
+}
+
+function selectCalendarDay(day) {
+  if (!calSelStart || calSelEnd) {
+    calSelStart = day;
+    calSelEnd = null;
+  } else if (day < calSelStart) {
+    calSelEnd = calSelStart;
+    calSelStart = day;
+  } else {
+    calSelEnd = day;
+  }
+
+  renderCalendar();
+
+  if (calSelStart && calSelEnd) {
+    hideCalendarPopup();
+    applyRange("custom", calSelStart, calSelEnd);
+  }
+}
+
+document.getElementById("cal-prev-month").addEventListener("click", () => {
+  calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() - 1, 1);
+  renderCalendar();
+});
+
+document.getElementById("cal-next-month").addEventListener("click", () => {
+  calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 1);
+  renderCalendar();
+});
+
+document.addEventListener("click", (e) => {
+  const wrap = document.querySelector(".custom-range-wrap");
+  if (wrap && !wrap.contains(e.target)) hideCalendarPopup();
+});
+
 document.querySelectorAll(".range-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", (e) => {
     const range = btn.dataset.range;
     setActiveButton(range);
-    const customInputs = document.getElementById("custom-inputs");
     if (range === "custom") {
-      customInputs.classList.remove("hidden");
+      calSelStart = null;
+      calSelEnd = null;
+      showCalendarPopup();
+      e.stopPropagation();
       return;
     }
-    customInputs.classList.add("hidden");
+    hideCalendarPopup();
     const now = new Date();
     if (range === "today") applyRange("today", now, now);
+    if (range === "yesterday") applyRange("yesterday", addDays(now, -1), addDays(now, -1));
     if (range === "week") applyRange("week", startOfWeek(now), now);
     if (range === "month") applyRange("month", startOfMonth(now), now);
     if (range === "quarter") applyRange("quarter", startOfQuarter(now), now);
     if (range === "year") applyRange("year", startOfYear(now), now);
   });
-});
-
-document.getElementById("apply-custom").addEventListener("click", () => {
-  const start = document.getElementById("start-date").value;
-  const end = document.getElementById("end-date").value;
-  if (!start || !end) return;
-  applyRange("custom", new Date(start), new Date(end));
 });
 
 document.getElementById("compare-checkbox").addEventListener("change", loadData);
@@ -186,8 +279,10 @@ document.querySelectorAll(".view-tab").forEach((tab) => {
     document.querySelectorAll(".view-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const view = tab.dataset.view;
-    document.getElementById("view-sales").classList.toggle("hidden", view !== "sales");
-    document.getElementById("view-marketing").classList.toggle("hidden", view !== "marketing");
+    ["sales", "leaderboard", "marketing"].forEach((v) => {
+      document.getElementById(`view-${v}`).classList.toggle("hidden", view !== v);
+    });
+    if (view === "leaderboard") loadLeaderboard();
   });
 });
 
@@ -215,20 +310,20 @@ function deltaHTML(change) {
   return `<span class="delta ${cls}">${arrow} ${Math.abs(rounded)}%</span>`;
 }
 
-function withPrev(currReps, prevReps) {
-  const map = {};
-  (prevReps || []).forEach((r) => {
-    map[r.name] = r;
-  });
-  return currReps.map((r) => ({ ...r, _prev: map[r.name] || null }));
-}
-
 function pctLabel(v) {
   return v !== null && v !== undefined && isFinite(v) ? `${Math.round(v * 10) / 10}%` : "—";
 }
 
 function rate(numerator, denominator) {
   return denominator ? (numerator / denominator) * 100 : null;
+}
+
+function withPrev(currReps, prevReps) {
+  const map = {};
+  (prevReps || []).forEach((r) => {
+    map[r.name] = r;
+  });
+  return currReps.map((r) => ({ ...r, _prev: map[r.name] || null }));
 }
 
 function renderTopKPIRow(curr, prev) {
@@ -345,26 +440,67 @@ function renderSources(curr, prev) {
   });
 }
 
-function renderSales(curr, prev) {
-  const container = document.getElementById("sales-cards");
-  container.innerHTML = "";
-  const prevByName = {};
-  (prev ? prev.reps : []).forEach((r) => {
-    prevByName[r.name] = r;
+function renderClosedSources(curr, prev) {
+  const order = ["Meta", "Inbound", "Website", "Other"];
+  const items = order.map((name) => ({
+    name,
+    _prev: prev ? { count: prev.totals.closedSources[name] || 0 } : null,
+    count: curr.totals.closedSources[name] || 0,
+  }));
+  renderBarChart("closed-sources-chart", items, {
+    valueOf: (r) => r.count,
+    formatValue: (item) => `${item.value} sold`,
+    showDelta: true,
   });
-  curr.reps.forEach((rep) => {
-    const p = prevByName[rep.name];
-    const delta = p ? deltaHTML(pctChange(rep.closedValue, p.closedValue)) : "";
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `
-      <div class="name">${rep.name}</div>
-      <div class="value">${currency(rep.closedValue)}</div>
-      <div class="count">${rep.closedCount} closed-won${delta ? ` · ${delta} vs prev` : ""}</div>
-      ${rep.missingClosedDate ? `<div class="note">${rep.missingClosedDate} deal(s) missing a Closed Date — counted by created date instead</div>` : ""}
-    `;
-    container.appendChild(card);
-  });
+}
+
+function rangeForLeaderboard(key) {
+  const now = new Date();
+  if (key === "week") return { start: startOfWeek(now), end: now };
+  if (key === "month") return { start: startOfMonth(now), end: now };
+  return { start: now, end: now };
+}
+
+function renderLeaderboardList(containerId, reps) {
+  const el = document.getElementById(containerId);
+  const ranked = reps.slice().sort((a, b) => b.closedValue - a.closedValue);
+
+  if (!ranked.length || !ranked.some((r) => r.closedValue > 0)) {
+    el.innerHTML = `<p class="deal-table-empty">No closed contracts yet.</p>`;
+    return;
+  }
+
+  el.innerHTML = ranked
+    .map((rep, i) => {
+      const rank = i + 1;
+      return `
+        <div class="leaderboard-row${rank === 1 ? " leaderboard-first" : ""}">
+          <div class="leaderboard-rank">${rank}</div>
+          <div class="leaderboard-name">${rep.name}</div>
+          <div class="leaderboard-value">${currency(rep.closedValue)}</div>
+          <div class="leaderboard-rate">${rep.closeRate !== null ? rep.closeRate + "%" : "—"}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function loadLeaderboardPeriod(key, containerId) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = `<p class="deal-table-empty">Loading…</p>`;
+  try {
+    const { start, end } = rangeForLeaderboard(key);
+    const data = await fetchJSON(`/api/performance?start=${fmtDate(start)}&end=${fmtDate(end)}`);
+    renderLeaderboardList(containerId, data.reps);
+  } catch (e) {
+    el.innerHTML = `<p class="deal-table-empty">Failed to load: ${e.message}</p>`;
+  }
+}
+
+function loadLeaderboard() {
+  loadLeaderboardPeriod("today", "leaderboard-today-body");
+  loadLeaderboardPeriod("week", "leaderboard-week-body");
+  loadLeaderboardPeriod("month", "leaderboard-month-body");
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -388,9 +524,9 @@ function renderBarChart(containerId, reps, opts) {
     }))
     .sort((a, b) => b.value - a.value);
 
-  const width = 640;
+  const width = Math.max(320, Math.round(el.clientWidth) || 640);
   const height = 300;
-  const padding = { top: 36, right: 20, bottom: 40, left: 20 };
+  const padding = { top: opts.showDelta ? 50 : 36, right: 20, bottom: 40, left: 20 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const barGap = 32;
@@ -405,7 +541,7 @@ function renderBarChart(containerId, reps, opts) {
   items.forEach((item, i) => {
     const x = padding.left + i * (barWidth + barGap);
 
-    if (item.previousValue !== null) {
+    if (item.previousValue !== null && item.value > 0) {
       const ghostHeight = (item.previousValue / maxValue) * chartHeight;
       svg.appendChild(
         svgEl("rect", { x, y: baselineY - ghostHeight, width: barWidth, height: Math.max(ghostHeight, 0), rx: 6, class: "bar-ghost-rect" })
@@ -420,9 +556,37 @@ function renderBarChart(containerId, reps, opts) {
     valueLabel.textContent = opts.formatValue(item);
     svg.appendChild(valueLabel);
 
+    if (opts.showDelta && item.previousValue !== null && item.previousValue !== 0) {
+      const change = ((item.value - item.previousValue) / item.previousValue) * 100;
+      const rounded = Math.round(change * 10) / 10;
+      const cls = rounded > 0 ? "bar-delta-up" : rounded < 0 ? "bar-delta-down" : "bar-delta-flat";
+      const arrow = rounded > 0 ? "▲" : rounded < 0 ? "▼" : "▬";
+      const deltaLabel = svgEl("text", {
+        x: x + barWidth / 2,
+        y: y - 24,
+        "text-anchor": "middle",
+        class: `bar-delta-label ${cls}`,
+      });
+      deltaLabel.textContent = `${arrow} ${Math.abs(rounded)}% vs prev`;
+      svg.appendChild(deltaLabel);
+    }
+
     const nameLabel = svgEl("text", { x: x + barWidth / 2, y: baselineY + 22, "text-anchor": "middle", class: "bar-name-label" });
     nameLabel.textContent = item.label;
     svg.appendChild(nameLabel);
+
+    if (opts.onClick) {
+      const hitRect = svgEl("rect", {
+        x,
+        y: padding.top,
+        width: barWidth,
+        height: chartHeight,
+        fill: "transparent",
+        class: "bar-hit-rect",
+      });
+      hitRect.addEventListener("click", () => opts.onClick(item.rep));
+      svg.appendChild(hitRect);
+    }
   });
 
   svg.appendChild(svgEl("line", { x1: padding.left, x2: width - padding.right, y1: baselineY, y2: baselineY, class: "bar-axis-line" }));
@@ -438,51 +602,6 @@ function renderBarChart(containerId, reps, opts) {
   el.appendChild(svg);
 }
 
-function renderPerfTable(curr, prev) {
-  const el = document.getElementById("perf-table-wrap");
-  const prevByName = {};
-  (prev ? prev.reps : []).forEach((r) => {
-    prevByName[r.name] = r;
-  });
-  const rows = curr.reps
-    .slice()
-    .sort((a, b) => b.closedValue - a.closedValue)
-    .map((rep) => {
-      const p = prevByName[rep.name];
-      const delta = p ? deltaHTML(pctChange(rep.closedValue, p.closedValue)) : "—";
-      return `<tr>
-        <td>${rep.name}</td>
-        <td>${currency(rep.closedValue)}</td>
-        <td>${rep.pctOfTotal}%</td>
-        <td>${rep.qualifiedLeads}</td>
-        <td>${rep.closeRate !== null ? rep.closeRate + "%" : "—"}</td>
-        <td>${delta}</td>
-      </tr>`;
-    })
-    .join("");
-
-  const totalDelta = prev ? deltaHTML(pctChange(curr.totals.closedValue, prev.totals.closedValue)) : "—";
-
-  el.innerHTML = `
-    <table class="perf-table">
-      <thead>
-        <tr><th>Rep</th><th>Closed $</th><th>% Share</th><th>Qualified Leads</th><th>Close Rate</th><th>Δ vs prev</th></tr>
-      </thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr>
-          <td>Total</td>
-          <td>${currency(curr.totals.closedValue)}</td>
-          <td>100%</td>
-          <td>${curr.totals.qualifiedLeads}</td>
-          <td>${curr.totals.closeRate !== null ? curr.totals.closeRate + "%" : "—"}</td>
-          <td>${totalDelta}</td>
-        </tr>
-      </tfoot>
-    </table>
-  `;
-}
-
 async function fetchJSON(url) {
   const res = await fetch(url);
   const data = await res.json();
@@ -490,11 +609,66 @@ async function fetchJSON(url) {
   return data;
 }
 
+function formatDealDate(isoDate) {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function closeRepDealsModal() {
+  document.getElementById("rep-deals-modal").classList.add("hidden");
+}
+
+async function openRepDealsModal(repName) {
+  const modal = document.getElementById("rep-deals-modal");
+  const body = document.getElementById("rep-deals-body");
+  document.getElementById("rep-deals-title").textContent = `${repName} — Sold Contracts`;
+  body.innerHTML = `<p class="deal-table-empty">Loading…</p>`;
+  modal.classList.remove("hidden");
+
+  try {
+    const start = fmtDate(currentRange.start);
+    const end = fmtDate(currentRange.end);
+    const data = await fetchJSON(`/api/rep-deals?rep=${encodeURIComponent(repName)}&start=${start}&end=${end}`);
+    if (!data.deals.length) {
+      body.innerHTML = `<p class="deal-table-empty">No closed contracts in this date range.</p>`;
+      return;
+    }
+    const rows = data.deals
+      .map(
+        (d) => `<tr>
+          <td>${d.name}</td>
+          <td>${currency(d.value)}</td>
+          <td>${formatDealDate(d.closedDate)}</td>
+        </tr>`
+      )
+      .join("");
+    body.innerHTML = `
+      <table class="deal-table">
+        <thead><tr><th>Lead</th><th>Contract Value</th><th>Closed Date</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    body.innerHTML = `<p class="deal-table-empty">Failed to load: ${e.message}</p>`;
+  }
+}
+
+document.getElementById("rep-deals-close").addEventListener("click", closeRepDealsModal);
+document.getElementById("rep-deals-modal").addEventListener("click", (e) => {
+  if (e.target.id === "rep-deals-modal") closeRepDealsModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeRepDealsModal();
+    hideCalendarPopup();
+  }
+});
+
 let loadToken = 0;
 
 function setLoading(isLoading) {
   document.getElementById("loading-indicator").classList.toggle("hidden", !isLoading);
-  document.querySelectorAll(".range-btn, #apply-custom, #compare-checkbox").forEach((el) => {
+  document.querySelectorAll(".range-btn, #compare-checkbox").forEach((el) => {
     el.disabled = isLoading;
   });
 }
@@ -529,18 +703,22 @@ async function loadData() {
     renderTopKPIRow(curr, prev);
     renderKPIRow(curr, prev);
     renderSources(curr, prev);
-    renderSales(curr, prev);
+    renderClosedSources(curr, prev);
 
     const repsWithPrev = withPrev(curr.reps, prev ? prev.reps : null);
 
     renderBarChart("sold-services-chart", repsWithPrev, {
       valueOf: (r) => r.closedCount,
       formatValue: (item) => `${item.value} sold`,
+      showDelta: true,
+      onClick: (rep) => openRepDealsModal(rep.name),
     });
 
     renderBarChart("sales-share", repsWithPrev, {
       valueOf: (r) => r.closedValue,
       formatValue: (item) => `${currency(item.value)} (${item.rep.pctOfTotal}%)`,
+      showDelta: true,
+      onClick: (rep) => openRepDealsModal(rep.name),
     });
 
     renderBarChart("qualified-leads-chart", repsWithPrev, {
@@ -555,7 +733,6 @@ async function loadData() {
       referenceLabel: "100%",
     });
 
-    renderPerfTable(curr, prev);
   } catch (e) {
     if (token === loadToken) showError(`Performance data: ${e.message}`);
   } finally {
@@ -566,3 +743,4 @@ async function loadData() {
 // default to today on load
 setActiveButton("today");
 applyRange("today", new Date(), new Date());
+loadLeaderboard();

@@ -32,7 +32,13 @@ FIRST_TOUCH_QUALIFIER_FIELD_ID = "bs8z28NC8AFOaTofqXMz"
 POWER_DIALER_ATTEMPT_FIELD_ID = "vNjCVqQ3NiMGBQ4mHehJ"
 LEAD_STAGE_FIELD_ID = "dt44fTl1UU9rY77EyAvb"
 
+EXCLUDED_TAGS = {"termite setter program"}
+
 DEFAULT_LOCATION_ID = "TqGBaQdHphlOYfdWZo9s"
+
+
+def is_excluded_contact(contact):
+    return bool(set(contact.get("tags") or []) & EXCLUDED_TAGS)
 
 
 def load_dotenv_into_environ():
@@ -216,11 +222,12 @@ def get_contacts_for(range_start):
         best = max(covering, key=lambda c: c["start"])  # tightest covering fetch
         return best["contacts"]
     contacts = fetch_all_contacts(range_start)
+    contacts = [c for c in contacts if not is_excluded_contact(c)]
     _contacts_cache.append({"start": range_start, "fetchedAt": now, "contacts": contacts})
     return contacts
 
 
-def get_all_contacts_cached():
+def _get_all_contacts_raw():
     now = time.monotonic()
     fetched_at = _all_contacts_cache["fetchedAt"]
     if fetched_at is not None and now - fetched_at < DATA_CACHE_TTL_SECONDS:
@@ -229,6 +236,14 @@ def get_all_contacts_cached():
     _all_contacts_cache["fetchedAt"] = now
     _all_contacts_cache["contacts"] = contacts
     return contacts
+
+
+def get_all_contacts_cached():
+    return [c for c in _get_all_contacts_raw() if not is_excluded_contact(c)]
+
+
+def get_excluded_contact_ids():
+    return {c.get("id") for c in _get_all_contacts_raw() if is_excluded_contact(c)}
 
 
 def get_opportunities_for(pipeline_id, stage_id):
@@ -248,11 +263,12 @@ def is_test_opportunity(opp):
 
 def rep_sales(rep, start, end):
     opps = get_opportunities_for(rep["pipelineId"], rep["closedWonStageId"])
+    excluded_ids = get_excluded_contact_ids()
     count = 0
     value = 0.0
     missing_closed_date = 0
     for opp in opps:
-        if is_test_opportunity(opp):
+        if is_test_opportunity(opp) or opp.get("contactId") in excluded_ids:
             continue
         closed_dt = parse_date(custom_field_value(opp.get("customFields"), CLOSED_DATE_FIELD_ID))
         missing = closed_dt is None
@@ -273,6 +289,36 @@ def rep_sales(rep, start, end):
     }
 
 
+def rep_deals(rep, start, end):
+    opps = get_opportunities_for(rep["pipelineId"], rep["closedWonStageId"])
+    excluded_ids = get_excluded_contact_ids()
+    deals = []
+    for opp in opps:
+        if is_test_opportunity(opp) or opp.get("contactId") in excluded_ids:
+            continue
+        closed_dt = parse_date(custom_field_value(opp.get("customFields"), CLOSED_DATE_FIELD_ID))
+        missing = closed_dt is None
+        if missing:
+            closed = local_date(parse_date(opp.get("createdAt") or opp.get("dateAdded")))
+        else:
+            closed = utc_date_only(closed_dt)
+        if in_range(closed, start, end):
+            deals.append({
+                "name": opp.get("name") or "Unnamed",
+                "value": round(float(opp.get("monetaryValue") or 0), 2),
+                "closedDate": closed.isoformat(),
+            })
+    deals.sort(key=lambda d: d["closedDate"], reverse=True)
+    return deals
+
+
+def handle_rep_deals(rep_name, start, end):
+    rep = next((r for r in REPS if r["name"] == rep_name), None)
+    if not rep:
+        raise ValueError(f"Unknown rep: {rep_name}")
+    return {"rep": rep_name, "deals": rep_deals(rep, start, end)}
+
+
 def handle_sales(start, end):
     with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
         reps_out = list(pool.map(lambda rep: rep_sales(rep, start, end), REPS))
@@ -285,6 +331,19 @@ def handle_sales(start, end):
     }
 
 
+def rep_leads_count(contacts, rep_name, start, end):
+    count = 0
+    for c in contacts:
+        added = local_date(parse_date(c.get("dateAdded")))
+        if not in_range(added, start, end):
+            continue
+        reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
+        reps = reps if isinstance(reps, list) else ([reps] if reps else [])
+        if rep_name in reps:
+            count += 1
+    return count
+
+
 def rep_qualified_leads_count(contacts, rep_name, start, end):
     count = 0
     for c in contacts:
@@ -293,6 +352,27 @@ def rep_qualified_leads_count(contacts, rep_name, start, end):
             continue
         status = custom_field_value(c.get("customFields"), QUALIFICATION_STATUS_FIELD_ID)
         if status != "Qualified":
+            continue
+        reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
+        reps = reps if isinstance(reps, list) else ([reps] if reps else [])
+        if rep_name in reps:
+            count += 1
+    return count
+
+
+def rep_closed_leads_count(contacts, rep_name, start, end):
+    # Cohort-consistent with rep_qualified_leads_count: both anchor on the
+    # contact's own dateAdded and the first-touch qualifier field, so the
+    # resulting rate isn't mixing leads added today with deals closed today
+    # but created earlier (see count_closed_leads for the same fix at the
+    # totals level).
+    count = 0
+    for c in contacts:
+        added = local_date(parse_date(c.get("dateAdded")))
+        if not in_range(added, start, end):
+            continue
+        stage = custom_field_value(c.get("customFields"), LEAD_STAGE_FIELD_ID)
+        if stage != "Closed/Won":
             continue
         reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
         reps = reps if isinstance(reps, list) else ([reps] if reps else [])
@@ -354,6 +434,19 @@ def count_sources(contacts, start, end):
     return counts
 
 
+def count_closed_sources(contacts, start, end):
+    counts = {"Meta": 0, "Inbound": 0, "Website": 0, "Other": 0}
+    for c in contacts:
+        added = local_date(parse_date(c.get("dateAdded")))
+        if not in_range(added, start, end):
+            continue
+        stage = custom_field_value(c.get("customFields"), LEAD_STAGE_FIELD_ID)
+        if stage != "Closed/Won":
+            continue
+        counts[categorize_source(c.get("source"))] += 1
+    return counts
+
+
 def compute_period_metrics(start, end, contacts):
     with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
         sales_list = list(pool.map(lambda rep: rep_sales(rep, start, end), REPS))
@@ -361,15 +454,19 @@ def compute_period_metrics(start, end, contacts):
     total_value = sum(r["value"] for r in sales_list)
     reps_out = []
     for rep, sales in zip(REPS, sales_list):
+        leads = rep_leads_count(contacts, rep["name"], start, end)
         qualified = rep_qualified_leads_count(contacts, rep["name"], start, end)
-        close_rate = round(sales["count"] / qualified * 100, 1) if qualified else None
+        closed_leads = rep_closed_leads_count(contacts, rep["name"], start, end)
+        close_rate = round(closed_leads / leads * 100, 1) if leads else None
         pct_of_total = round(sales["value"] / total_value * 100, 1) if total_value else 0.0
         reps_out.append({
             "name": rep["name"],
             "closedValue": sales["value"],
             "closedCount": sales["count"],
             "missingClosedDate": sales["missingClosedDate"],
+            "leads": leads,
             "qualifiedLeads": qualified,
+            "closedLeads": closed_leads,
             "closeRate": close_rate,
             "pctOfTotal": pct_of_total,
         })
@@ -392,6 +489,7 @@ def compute_period_metrics(start, end, contacts):
             "closedLeads": total_closed_leads,
             "totalClosedRate": total_closed_rate,
             "sources": count_sources(contacts, start, end),
+            "closedSources": count_closed_sources(contacts, start, end),
         },
     }
 
@@ -561,27 +659,53 @@ def clear_all_caches():
     _all_contacts_cache["contacts"] = []
 
 
-def warm_cache():
-    # Pre-fetches the data behind the default view (this month) so the first
-    # real request after a cold start doesn't pay the full fetch cost.
-    def _run():
-        try:
-            today = datetime.now(BUSINESS_TZ).date()
-            month_start = today.replace(day=1)
-            get_contacts_for(month_start)
-            with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
-                list(pool.map(lambda rep: get_opportunities_for(rep["pipelineId"], rep["closedWonStageId"]), REPS))
-        except Exception:
-            pass  # best-effort warm-up; a real request will retry and surface any real error
+def _refresh_month_contacts():
+    today = datetime.now(BUSINESS_TZ).date()
+    month_start = today.replace(day=1)
+    contacts = fetch_all_contacts(month_start)
+    contacts = [c for c in contacts if not is_excluded_contact(c)]
+    now = time.monotonic()
+    _contacts_cache[:] = [c for c in _contacts_cache if c["start"] != month_start]
+    _contacts_cache.append({"start": month_start, "fetchedAt": now, "contacts": contacts})
 
-    def _run_full_scan():
+
+def _refresh_all_contacts():
+    contacts = fetch_all_contacts_unbounded()
+    _all_contacts_cache["fetchedAt"] = time.monotonic()
+    _all_contacts_cache["contacts"] = contacts
+
+
+def _refresh_opportunities():
+    with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
+        opps_by_rep = list(pool.map(lambda rep: fetch_all_opportunities(rep["pipelineId"], rep["closedWonStageId"]), REPS))
+    now = time.monotonic()
+    for rep, opps in zip(REPS, opps_by_rep):
+        _opps_cache[(rep["pipelineId"], rep["closedWonStageId"])] = {"fetchedAt": now, "opps": opps}
+
+
+def refresh_data_caches():
+    # Best-effort: one fetch failing (e.g. a transient HighLevel timeout)
+    # shouldn't stop the others from refreshing.
+    for fn in (_refresh_month_contacts, _refresh_all_contacts, _refresh_opportunities):
         try:
-            get_all_contacts_cached()
+            fn()
         except Exception:
             pass
 
-    threading.Thread(target=_run, daemon=True).start()
-    threading.Thread(target=_run_full_scan, daemon=True).start()
+
+# Refreshes just under the 10-minute cache TTL so data is always replaced
+# *before* it goes stale — a real user request should never be the one
+# paying for a live HighLevel fetch.
+BACKGROUND_REFRESH_SECONDS = 540
+
+
+def warm_cache():
+    def _loop():
+        while True:
+            refresh_data_caches()
+            time.sleep(BACKGROUND_REFRESH_SECONDS)
+
+    threading.Thread(target=_loop, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -665,6 +789,24 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_json(cached(("performance", start, end), lambda: handle_performance(start, end)))
             except ConfigError as e:
+                self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+            return
+
+        if parsed.path == "/api/rep-deals":
+            try:
+                rep_name = qs["rep"][0]
+                start = datetime.fromisoformat(qs["start"][0]).date()
+                end = datetime.fromisoformat(qs["end"][0]).date()
+            except (KeyError, ValueError):
+                self.send_json({"error": "rep, start and end query params are required"}, 400)
+                return
+            try:
+                self.send_json(cached(("rep-deals", rep_name, start, end), lambda: handle_rep_deals(rep_name, start, end)))
+            except ConfigError as e:
+                self.send_json({"error": str(e)}, 400)
+            except ValueError as e:
                 self.send_json({"error": str(e)}, 400)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
