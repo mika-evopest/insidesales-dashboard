@@ -22,29 +22,40 @@
     <div id="view-sales" class="hidden">
       <div class="toolbar">
         <div class="range-controls">
-          <button data-range="today" class="range-btn">Today</button>
-          <button data-range="yesterday" class="range-btn">Yesterday</button>
-          <button data-range="week" class="range-btn">This Week</button>
-          <button data-range="month" class="range-btn">This Month</button>
-          <button data-range="quarter" class="range-btn">This Quarter</button>
-          <button data-range="year" class="range-btn">This Year</button>
-          <span class="custom-range-wrap">
-            <button data-range="custom" class="range-btn">Custom</button>
-            <div id="calendar-popup" class="calendar-popup hidden">
-              <div class="calendar-header">
-                <button id="cal-prev-month" class="calendar-nav" type="button">&lsaquo;</button>
-                <span id="cal-month-label"></span>
-                <button id="cal-next-month" class="calendar-nav" type="button">&rsaquo;</button>
+          <div class="range-col">
+            <button data-range="today" class="range-btn">Today</button>
+            <button data-range="yesterday" class="range-btn">Yesterday</button>
+          </div>
+          <div class="range-col">
+            <button data-range="week" class="range-btn">This Week</button>
+            <button data-range="lastweek" class="range-btn">Last Week</button>
+          </div>
+          <div class="range-col">
+            <button data-range="quarter" class="range-btn">This Quarter</button>
+            <button data-range="month" class="range-btn">This Month</button>
+          </div>
+          <div class="range-col">
+            <span class="custom-range-wrap">
+              <button data-range="custom" class="range-btn">Custom</button>
+              <div id="calendar-popup" class="calendar-popup hidden">
+                <div class="calendar-header">
+                  <button id="cal-prev-month" class="calendar-nav" type="button">&lsaquo;</button>
+                  <span id="cal-month-label"></span>
+                  <button id="cal-next-month" class="calendar-nav" type="button">&rsaquo;</button>
+                </div>
+                <div class="calendar-weekdays">
+                  <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+                </div>
+                <div id="calendar-grid" class="calendar-grid"></div>
+                <div id="calendar-hint" class="calendar-hint">Pick a start date</div>
               </div>
-              <div class="calendar-weekdays">
-                <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
-              </div>
-              <div id="calendar-grid" class="calendar-grid"></div>
-              <div id="calendar-hint" class="calendar-hint">Pick a start date</div>
-            </div>
-          </span>
-          <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
-          <button id="refresh-data" class="range-btn">Refresh Data</button>
+            </span>
+            <button data-range="year" class="range-btn">This Year</button>
+          </div>
+          <div class="range-col range-col-refresh">
+            <button id="refresh-data" class="range-btn">Refresh Data</button>
+            <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
+          </div>
         </div>
 
         <label class="compare-toggle">

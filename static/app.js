@@ -45,6 +45,7 @@ function previousPeriodFor(key, start, end) {
       return { start: y, end: y };
     }
     case "week":
+    case "lastweek":
       return { start: addDays(start, -7), end: addDays(end, -7) };
     case "month": {
       const prevMonthStart = new Date(start.getFullYear(), start.getMonth() - 1, 1);
@@ -153,9 +154,6 @@ function selectCalendarDay(day) {
   if (!calSelStart || calSelEnd) {
     calSelStart = day;
     calSelEnd = null;
-  } else if (day < calSelStart) {
-    calSelEnd = calSelStart;
-    calSelStart = day;
   } else {
     calSelEnd = day;
   }
@@ -199,6 +197,7 @@ document.querySelectorAll(".range-btn").forEach((btn) => {
     if (range === "today") applyRange("today", now, now);
     if (range === "yesterday") applyRange("yesterday", addDays(now, -1), addDays(now, -1));
     if (range === "week") applyRange("week", startOfWeek(now), now);
+    if (range === "lastweek") applyRange("lastweek", addDays(startOfWeek(now), -7), addDays(startOfWeek(now), -1));
     if (range === "month") applyRange("month", startOfMonth(now), now);
     if (range === "quarter") applyRange("quarter", startOfQuarter(now), now);
     if (range === "year") applyRange("year", startOfYear(now), now);
@@ -463,7 +462,9 @@ function rangeForLeaderboard(key) {
 
 function renderLeaderboardList(containerId, reps) {
   const el = document.getElementById(containerId);
-  const ranked = reps.slice().sort((a, b) => b.closedValue - a.closedValue);
+  const ranked = reps
+    .slice()
+    .sort((a, b) => (b.leaderboardCloseRate ?? -1) - (a.leaderboardCloseRate ?? -1));
 
   if (!ranked.length || !ranked.some((r) => r.closedValue > 0)) {
     el.innerHTML = `<p class="deal-table-empty">No closed contracts yet.</p>`;
@@ -478,7 +479,7 @@ function renderLeaderboardList(containerId, reps) {
           <div class="leaderboard-rank">${rank}</div>
           <div class="leaderboard-name">${rep.name}</div>
           <div class="leaderboard-value">${currency(rep.closedValue)}</div>
-          <div class="leaderboard-rate">${rep.closeRate !== null ? rep.closeRate + "%" : "—"}</div>
+          <div class="leaderboard-rate">${rep.leaderboardCloseRate !== null ? rep.leaderboardCloseRate + "%" : "—"}</div>
         </div>
       `;
     })

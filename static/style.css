@@ -105,7 +105,11 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
 .view-tab:hover { border-color: var(--accent); color: var(--accent); }
 .view-tab.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 
-.range-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 8px; }
+.range-controls { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; justify-content: center; margin-bottom: 8px; }
+
+.range-col { display: flex; flex-direction: column; gap: 8px; }
+
+.range-col-refresh { justify-content: center; align-items: center; align-self: stretch; }
 
 .range-btn {
   padding: 6px 14px;
@@ -201,7 +205,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
 
 .calendar-hint { margin-top: 8px; font-size: 11px; color: var(--muted); text-align: center; }
 
-.loading-indicator { margin-left: 8px; color: var(--accent); font-size: 13px; font-weight: 600; }
+.loading-indicator { color: var(--accent); font-size: 13px; font-weight: 600; }
 
 .range-btn:disabled { opacity: 0.5; cursor: default; }
 

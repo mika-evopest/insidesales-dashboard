@@ -360,6 +360,24 @@ def rep_qualified_leads_count(contacts, rep_name, start, end):
     return count
 
 
+def rep_qualified_pool_count(all_contacts, rep_name):
+    # Unlike rep_qualified_leads_count, not scoped to a date range — this is
+    # the rep's entire qualified-lead pool to date. Used for the leaderboard's
+    # Today/This Week close rate, where a same-day cohort is nearly always
+    # empty because the First-Touch Qualifier field lags a day or more behind
+    # a lead's dateAdded.
+    count = 0
+    for c in all_contacts:
+        status = custom_field_value(c.get("customFields"), QUALIFICATION_STATUS_FIELD_ID)
+        if status != "Qualified":
+            continue
+        reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
+        reps = reps if isinstance(reps, list) else ([reps] if reps else [])
+        if rep_name in reps:
+            count += 1
+    return count
+
+
 def rep_closed_leads_count(contacts, rep_name, start, end):
     # Cohort-consistent with rep_qualified_leads_count: both anchor on the
     # contact's own dateAdded and the first-touch qualifier field, so the
@@ -451,6 +469,8 @@ def compute_period_metrics(start, end, contacts):
     with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
         sales_list = list(pool.map(lambda rep: rep_sales(rep, start, end), REPS))
 
+    all_contacts = get_all_contacts_cached()
+
     total_value = sum(r["value"] for r in sales_list)
     reps_out = []
     for rep, sales in zip(REPS, sales_list):
@@ -458,6 +478,15 @@ def compute_period_metrics(start, end, contacts):
         qualified = rep_qualified_leads_count(contacts, rep["name"], start, end)
         closed_leads = rep_closed_leads_count(contacts, rep["name"], start, end)
         close_rate = round(closed_leads / leads * 100, 1) if leads else None
+        rolling_pool = rep_qualified_pool_count(all_contacts, rep["name"])
+        rolling_close_rate = round(sales["count"] / rolling_pool * 100, 1) if rolling_pool else None
+        # The rolling pool undercounts anyone with history before Qualification
+        # Status existed (added 2026-07-14), so it can exceed 100% over a long
+        # enough window. Prefer the cohort rate whenever it has data (accurate
+        # for mature periods like This Month); only fall back to the rolling
+        # rate for narrow periods (Today/This Week) where the cohort is empty
+        # because the First-Touch Qualifier field hasn't been tagged yet.
+        leaderboard_close_rate = close_rate if close_rate is not None else rolling_close_rate
         pct_of_total = round(sales["value"] / total_value * 100, 1) if total_value else 0.0
         reps_out.append({
             "name": rep["name"],
@@ -468,6 +497,8 @@ def compute_period_metrics(start, end, contacts):
             "qualifiedLeads": qualified,
             "closedLeads": closed_leads,
             "closeRate": close_rate,
+            "rollingCloseRate": rolling_close_rate,
+            "leaderboardCloseRate": leaderboard_close_rate,
             "pctOfTotal": pct_of_total,
         })
 
@@ -730,6 +761,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
