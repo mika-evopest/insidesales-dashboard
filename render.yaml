@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: insidesales-evopest
+    name: evo-insidesales-dashboard
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
