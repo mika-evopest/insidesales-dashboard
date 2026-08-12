@@ -229,10 +229,10 @@ main { padding: 24px 32px 48px; max-width: 1600px; margin: 0 auto; }
 .bar-axis-line { stroke: var(--border); stroke-width: 1; }
 .bar-ref-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
 .bar-ref-label { fill: var(--muted); font-size: 11px; }
-.bar-value-label { fill: var(--text); font-size: 13px; font-weight: 600; }
-.bar-name-label { fill: var(--muted); font-size: 13px; }
+.bar-value-label { fill: var(--text); font-size: 16px; font-weight: 600; }
+.bar-name-label { fill: var(--muted); font-size: 16px; }
 
-.bar-delta-label { font-size: 11px; font-weight: 600; }
+.bar-delta-label { font-size: 13px; font-weight: 600; }
 .bar-delta-up { fill: var(--accent); }
 .bar-delta-down { fill: #a32a1f; }
 .bar-delta-flat { fill: var(--muted); }
@@ -359,26 +359,26 @@ main { padding: 24px 32px 48px; max-width: 1600px; margin: 0 auto; }
 .leaderboard-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
   flex-wrap: wrap;
-  padding: 12px 16px;
+  padding: 16px 20px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .leaderboard-row.leaderboard-first { border-color: var(--accent); background: var(--accent-bg); }
 
 .leaderboard-rank {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: var(--bg);
   border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--muted);
   flex-shrink: 0;
@@ -386,7 +386,7 @@ main { padding: 24px 32px 48px; max-width: 1600px; margin: 0 auto; }
 
 .leaderboard-first .leaderboard-rank { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-.leaderboard-name { font-weight: 600; flex: 1 1 140px; min-width: 0; }
+.leaderboard-name { font-size: 19px; font-weight: 600; flex: 1 1 140px; min-width: 0; }
 
-.leaderboard-value { font-size: 14px; font-weight: 700; flex-shrink: 0; min-width: 80px; text-align: right; }
-.leaderboard-rate { font-size: 13px; color: var(--muted); flex-shrink: 0; min-width: 50px; text-align: right; }
+.leaderboard-value { font-size: 20px; font-weight: 700; flex-shrink: 0; min-width: 90px; text-align: right; }
+.leaderboard-rate { font-size: 16px; color: var(--muted); flex-shrink: 0; min-width: 55px; text-align: right; }

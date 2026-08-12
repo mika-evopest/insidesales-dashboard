@@ -28,7 +28,7 @@ REPS = [
 
 CLOSED_DATE_FIELD_ID = "y2AEQ5nyUzxhLLLnG6bx"
 QUALIFICATION_STATUS_FIELD_ID = "SYrPZw5WGIbpPYuiDaBx"
-FIRST_TOUCH_QUALIFIER_FIELD_ID = "bs8z28NC8AFOaTofqXMz"
+FIRST_TOUCH_QUALIFIER_FIELD_ID = "bvDD6N47FKnlJEEwNAkb"
 POWER_DIALER_ATTEMPT_FIELD_ID = "vNjCVqQ3NiMGBQ4mHehJ"
 LEAD_STAGE_FIELD_ID = "dt44fTl1UU9rY77EyAvb"
 
@@ -360,22 +360,41 @@ def rep_qualified_leads_count(contacts, rep_name, start, end):
     return count
 
 
-def rep_qualified_pool_count(all_contacts, rep_name):
-    # Unlike rep_qualified_leads_count, not scoped to a date range — this is
-    # the rep's entire qualified-lead pool to date. Used for the leaderboard's
-    # Today/This Week close rate, where a same-day cohort is nearly always
-    # empty because the First-Touch Qualifier field lags a day or more behind
-    # a lead's dateAdded.
+def rep_ftq_pool_count(all_contacts, rep_name):
+    # Not scoped to a date range — this is the rep's entire First-Touch-Qualifier
+    # lead pool to date. Denominator for the leaderboard close rate, since a
+    # same-day cohort is nearly always empty (the field lags a day or more
+    # behind a lead's dateAdded).
     count = 0
     for c in all_contacts:
-        status = custom_field_value(c.get("customFields"), QUALIFICATION_STATUS_FIELD_ID)
-        if status != "Qualified":
-            continue
         reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
         reps = reps if isinstance(reps, list) else ([reps] if reps else [])
         if rep_name in reps:
             count += 1
     return count
+
+
+FIRST_TOUCH_QUALIFIER_STALE_DAYS = 7
+
+
+def first_touch_qualifier_is_stale(all_contacts):
+    # The rolling pool above assumes First-Touch Qualifier tagging is
+    # ongoing and just lags a day or so behind dateAdded. If tagging has
+    # stopped entirely (as happened starting 2026-07-24), the pool freezes
+    # while closedCount keeps climbing, so the rolling rate drifts further
+    # past reality every day it's used. Treat the whole mechanism as
+    # unreliable once nothing has been tagged in a while.
+    latest = None
+    for c in all_contacts:
+        if not custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID):
+            continue
+        added = parse_date(c.get("dateAdded"))
+        if added and (latest is None or added > latest):
+            latest = added
+    if latest is None:
+        return True
+    cutoff = datetime.now(BUSINESS_TZ).date() - timedelta(days=FIRST_TOUCH_QUALIFIER_STALE_DAYS)
+    return local_date(latest) < cutoff
 
 
 def rep_closed_leads_count(contacts, rep_name, start, end):
@@ -470,6 +489,7 @@ def compute_period_metrics(start, end, contacts):
         sales_list = list(pool.map(lambda rep: rep_sales(rep, start, end), REPS))
 
     all_contacts = get_all_contacts_cached()
+    rolling_pool_stale = first_touch_qualifier_is_stale(all_contacts)
 
     total_value = sum(r["value"] for r in sales_list)
     reps_out = []
@@ -478,15 +498,16 @@ def compute_period_metrics(start, end, contacts):
         qualified = rep_qualified_leads_count(contacts, rep["name"], start, end)
         closed_leads = rep_closed_leads_count(contacts, rep["name"], start, end)
         close_rate = round(closed_leads / leads * 100, 1) if leads else None
-        rolling_pool = rep_qualified_pool_count(all_contacts, rep["name"])
-        rolling_close_rate = round(sales["count"] / rolling_pool * 100, 1) if rolling_pool else None
-        # The rolling pool undercounts anyone with history before Qualification
-        # Status existed (added 2026-07-14), so it can exceed 100% over a long
-        # enough window. Prefer the cohort rate whenever it has data (accurate
-        # for mature periods like This Month); only fall back to the rolling
-        # rate for narrow periods (Today/This Week) where the cohort is empty
-        # because the First-Touch Qualifier field hasn't been tagged yet.
-        leaderboard_close_rate = close_rate if close_rate is not None else rolling_close_rate
+        ftq_pool = rep_ftq_pool_count(all_contacts, rep["name"])
+        # Leaderboard close rate = closed deals this period ÷ the rep's entire
+        # all-time First-Touch-Qualifier lead pool (not scoped to this period —
+        # a same-day cohort is nearly always empty since the field lags a day
+        # or more behind a lead's dateAdded). If tagging has stopped outright
+        # (pool frozen) or the rate is over 100%, don't show a number that
+        # looks precise but is actually wrong.
+        leaderboard_close_rate = round(sales["count"] / ftq_pool * 100, 1) if ftq_pool else None
+        if rolling_pool_stale or (leaderboard_close_rate is not None and leaderboard_close_rate > 100):
+            leaderboard_close_rate = None
         pct_of_total = round(sales["value"] / total_value * 100, 1) if total_value else 0.0
         reps_out.append({
             "name": rep["name"],
@@ -497,7 +518,6 @@ def compute_period_metrics(start, end, contacts):
             "qualifiedLeads": qualified,
             "closedLeads": closed_leads,
             "closeRate": close_rate,
-            "rollingCloseRate": rolling_close_rate,
             "leaderboardCloseRate": leaderboard_close_rate,
             "pctOfTotal": pct_of_total,
         })
