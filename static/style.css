@@ -78,8 +78,14 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
   gap: 20px;
 }
 
+.dashboard-row-3 { grid-template-columns: repeat(3, 1fr); }
+
 @media (max-width: 760px) {
   .dashboard-row { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 1100px) {
+  .dashboard-row-3 { grid-template-columns: 1fr; }
 }
 
 .widget-split { display: flex; gap: 20px; align-items: stretch; flex-wrap: wrap; }
