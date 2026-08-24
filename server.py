@@ -31,10 +31,33 @@ QUALIFICATION_STATUS_FIELD_ID = "SYrPZw5WGIbpPYuiDaBx"
 FIRST_TOUCH_QUALIFIER_FIELD_ID = "bvDD6N47FKnlJEEwNAkb"
 POWER_DIALER_ATTEMPT_FIELD_ID = "vNjCVqQ3NiMGBQ4mHehJ"
 LEAD_STAGE_FIELD_ID = "dt44fTl1UU9rY77EyAvb"
+SALES_REP_FIELD_ID = "LWLa9vQ7KLP3UuV5MMzc"
 
 EXCLUDED_TAGS = {"termite setter program"}
 
 DEFAULT_LOCATION_ID = "TqGBaQdHphlOYfdWZo9s"
+
+# Cold Outbound is a separate GHL subaccount (own API key + location).
+COLD_OUTBOUND_LAST_CALLER_FIELD_ID = "RKEqPv4XbmkuZrqb0ZJr"
+COLD_OUTBOUND_LAST_CALL_DATE_FIELD_ID = "d8N0IGeaZJsqhdq04x8A"
+COLD_OUTBOUND_DISPOSITION_FIELD_ID = "tfYslC34CMnaSULFwYU1"
+COLD_OUTBOUND_DISPOSITION_DATE_FIELD_ID = "kFn9EOOlCzR4q8cLRfGk"
+
+# "Last Outbound Caller" picklist options in the Cold Outbound subaccount —
+# shown on the chart even when a rep has zero calls in the selected range.
+COLD_OUTBOUND_CALLERS = ["Jay Reyes", "Sergio Anaya", "Daniel Barba"]
+
+# Fixed call-outcome categories, always shown even at zero count. "Last Call
+# Dispositon" is a free-text field in HighLevel (no picklist), so this list is
+# maintained here rather than read from the field definition.
+COLD_OUTBOUND_DISPOSITIONS = [
+    "Closed/Won",
+    "Answered",
+    "No Answer/VM",
+    "Not Interested",
+    "Incorrect Number",
+    "Do Not Call",
+]
 
 
 def is_excluded_contact(contact):
@@ -60,21 +83,24 @@ def load_dotenv_into_environ():
 load_dotenv_into_environ()
 API_KEY = os.environ.get("HIGHLEVEL_API_KEY", "")
 LOCATION_ID = os.environ.get("HIGHLEVEL_LOCATION_ID", DEFAULT_LOCATION_ID)
+COLD_OUTBOUND_API_KEY = os.environ.get("HIGHLEVEL_API_KEY_COLD_OUTBOUND", "")
+COLD_OUTBOUND_LOCATION_ID = os.environ.get("HIGHLEVEL_LOCATION_ID_COLD_OUTBOUND", "")
 
 
 class ConfigError(Exception):
     pass
 
 
-def hl_request(path, params=None, method="GET"):
-    if not API_KEY:
-        raise ConfigError("HIGHLEVEL_API_KEY is not set. Add it to .env and restart the server.")
+def hl_request(path, params=None, method="GET", api_key=None):
+    api_key = api_key or API_KEY
+    if not api_key:
+        raise ConfigError("HighLevel API key is not set. Add it to .env and restart the server.")
     params = dict(params or {})
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, method=method)
-    req.add_header("Authorization", f"Bearer {API_KEY}")
+    req.add_header("Authorization", f"Bearer {api_key}")
     req.add_header("Version", API_VERSION)
     req.add_header("Accept", "application/json")
     req.add_header("User-Agent", "evo-dashboard/1.0")
@@ -165,17 +191,18 @@ def fetch_all_opportunities(pipeline_id, stage_id):
     return results
 
 
-def paginate_contacts(max_pages, should_stop=None):
+def paginate_contacts(max_pages, should_stop=None, location_id=None, api_key=None):
+    location_id = location_id or LOCATION_ID
     results = []
     start_after = None
     start_after_id = None
     for _ in range(max_pages):
-        params = {"locationId": LOCATION_ID, "limit": 100}
+        params = {"locationId": location_id, "limit": 100}
         if start_after:
             params["startAfter"] = start_after
         if start_after_id:
             params["startAfterId"] = start_after_id
-        data = hl_request("/contacts/", params)
+        data = hl_request("/contacts/", params, api_key=api_key)
         page = data.get("contacts", data.get("data", []))
         results.extend(page)
         if not page:
@@ -208,10 +235,18 @@ def fetch_all_contacts_unbounded():
     return paginate_contacts(max_pages=200)  # safety cap: 200 pages x 100 = 20000
 
 
+def fetch_all_cold_outbound_contacts():
+    # Full scan against the Cold Outbound subaccount — same reasoning as
+    # fetch_all_contacts_unbounded: "Last Outbound Call" can be set on any
+    # contact regardless of dateAdded.
+    return paginate_contacts(max_pages=200, location_id=COLD_OUTBOUND_LOCATION_ID, api_key=COLD_OUTBOUND_API_KEY)
+
+
 DATA_CACHE_TTL_SECONDS = 600
 _contacts_cache = []
 _opps_cache = {}
 _all_contacts_cache = {"fetchedAt": None, "contacts": []}
+_cold_outbound_contacts_cache = {"fetchedAt": None, "contacts": []}
 
 
 def get_contacts_for(range_start):
@@ -244,6 +279,21 @@ def get_all_contacts_cached():
 
 def get_excluded_contact_ids():
     return {c.get("id") for c in _get_all_contacts_raw() if is_excluded_contact(c)}
+
+
+def get_cold_outbound_contacts_cached():
+    if not COLD_OUTBOUND_API_KEY or not COLD_OUTBOUND_LOCATION_ID:
+        raise ConfigError(
+            "HIGHLEVEL_API_KEY_COLD_OUTBOUND / HIGHLEVEL_LOCATION_ID_COLD_OUTBOUND are not set. Add them to .env and restart the server."
+        )
+    now = time.monotonic()
+    fetched_at = _cold_outbound_contacts_cache["fetchedAt"]
+    if fetched_at is not None and now - fetched_at < DATA_CACHE_TTL_SECONDS:
+        return _cold_outbound_contacts_cache["contacts"]
+    contacts = fetch_all_cold_outbound_contacts()
+    _cold_outbound_contacts_cache["fetchedAt"] = now
+    _cold_outbound_contacts_cache["contacts"] = contacts
+    return contacts
 
 
 def get_opportunities_for(pipeline_id, stage_id):
@@ -398,11 +448,11 @@ def first_touch_qualifier_is_stale(all_contacts):
 
 
 def rep_closed_leads_count(contacts, rep_name, start, end):
-    # Cohort-consistent with rep_qualified_leads_count: both anchor on the
-    # contact's own dateAdded and the first-touch qualifier field, so the
-    # resulting rate isn't mixing leads added today with deals closed today
-    # but created earlier (see count_closed_leads for the same fix at the
-    # totals level).
+    # Attributed via the Sales Rep field (not First-Touch Qualifier, unlike
+    # rep_leads_count/rep_qualified_leads_count) — closing credit goes to
+    # whoever's marked as Sales Rep, which can differ from who first touched
+    # the lead. Still anchored on the contact's own dateAdded, not opportunity
+    # closed date (see count_closed_leads for the same fix at the totals level).
     count = 0
     for c in contacts:
         added = local_date(parse_date(c.get("dateAdded")))
@@ -411,7 +461,7 @@ def rep_closed_leads_count(contacts, rep_name, start, end):
         stage = custom_field_value(c.get("customFields"), LEAD_STAGE_FIELD_ID)
         if stage != "Closed/Won":
             continue
-        reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
+        reps = custom_field_value(c.get("customFields"), SALES_REP_FIELD_ID)
         reps = reps if isinstance(reps, list) else ([reps] if reps else [])
         if rep_name in reps:
             count += 1
@@ -687,6 +737,43 @@ def handle_qualification(start, end):
     }
 
 
+def tally_field_by_date_field(contacts, value_field_id, date_field_id, start, end):
+    # Like tally_field, but the date range is judged by a custom DATE field
+    # (e.g. "Last Outbound Call") instead of the contact's dateAdded.
+    counts = {}
+    unset = 0
+    total_in_range = 0
+    for c in contacts:
+        cf = c.get("customFields")
+        d = utc_date_only(parse_date(custom_field_value(cf, date_field_id)))
+        if not in_range(d, start, end):
+            continue
+        total_in_range += 1
+        value = custom_field_value(cf, value_field_id)
+        if value is None or value == "" or value == []:
+            unset += 1
+            continue
+        values = value if isinstance(value, list) else [value]
+        for v in values:
+            counts[v] = counts.get(v, 0) + 1
+    return {"counts": counts, "unset": unset, "totalInRange": total_in_range}
+
+
+def handle_cold_outbound(start, end):
+    contacts = get_cold_outbound_contacts_cached()
+    caller_counts = tally_field_by_date_field(
+        contacts, COLD_OUTBOUND_LAST_CALLER_FIELD_ID, COLD_OUTBOUND_LAST_CALL_DATE_FIELD_ID, start, end
+    )
+    for name in COLD_OUTBOUND_CALLERS:
+        caller_counts["counts"].setdefault(name, 0)
+    disposition_counts = tally_field_by_date_field(
+        contacts, COLD_OUTBOUND_DISPOSITION_FIELD_ID, COLD_OUTBOUND_DISPOSITION_DATE_FIELD_ID, start, end
+    )
+    for name in COLD_OUTBOUND_DISPOSITIONS:
+        disposition_counts["counts"].setdefault(name, 0)
+    return {"callerCounts": caller_counts, "dispositionCounts": disposition_counts}
+
+
 CACHE_TTL_SECONDS = 600
 _cache = {}
 
@@ -708,6 +795,8 @@ def clear_all_caches():
     _opps_cache.clear()
     _all_contacts_cache["fetchedAt"] = None
     _all_contacts_cache["contacts"] = []
+    _cold_outbound_contacts_cache["fetchedAt"] = None
+    _cold_outbound_contacts_cache["contacts"] = []
 
 
 def _refresh_month_contacts():
@@ -846,6 +935,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 500)
             return
 
+        if parsed.path == "/api/cold-outbound":
+            try:
+                start = datetime.fromisoformat(qs["start"][0]).date()
+                end = datetime.fromisoformat(qs["end"][0]).date()
+            except (KeyError, ValueError):
+                self.send_json({"error": "start and end query params (YYYY-MM-DD) are required"}, 400)
+                return
+            try:
+                self.send_json(cached(("cold-outbound", start, end), lambda: handle_cold_outbound(start, end)))
+            except ConfigError as e:
+                self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+            return
+
         if parsed.path == "/api/rep-deals":
             try:
                 rep_name = qs["rep"][0]
@@ -891,4 +995,6 @@ if __name__ == "__main__":
         print("WARNING: HIGHLEVEL_API_KEY is not set — API calls will fail until it's added as an env var.")
     else:
         warm_cache()
+    if not COLD_OUTBOUND_API_KEY or not COLD_OUTBOUND_LOCATION_ID:
+        print("WARNING: HIGHLEVEL_API_KEY_COLD_OUTBOUND / HIGHLEVEL_LOCATION_ID_COLD_OUTBOUND are not set — the Cold Outbound tab will fail until they're added as env vars.")
     server.serve_forever()

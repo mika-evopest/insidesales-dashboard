@@ -71,6 +71,8 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
 
 .leaderboard-today-widget { max-width: 620px; margin: 0 auto; width: 100%; }
 
+.cold-outbound-summary { max-width: 280px; margin: 0 auto; width: 100%; text-align: center; }
+
 .dashboard-row {
   grid-column: 1 / -1;
   display: grid;

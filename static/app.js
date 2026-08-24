@@ -278,9 +278,10 @@ document.querySelectorAll(".view-tab").forEach((tab) => {
     document.querySelectorAll(".view-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const view = tab.dataset.view;
-    ["sales", "leaderboard", "marketing"].forEach((v) => {
+    ["sales", "leaderboard", "marketing", "cold-outbound"].forEach((v) => {
       document.getElementById(`view-${v}`).classList.toggle("hidden", view !== v);
     });
+    document.getElementById("range-toolbar").classList.toggle("hidden", view !== "sales" && view !== "cold-outbound");
     if (view === "leaderboard") loadLeaderboard();
   });
 });
@@ -512,6 +513,24 @@ function svgEl(tag, attrs) {
   return el;
 }
 
+function wrapBarLabel(text, maxChars) {
+  if (text.length <= maxChars || !text.includes(" ")) return [text];
+  const words = text.split(" ");
+  const lines = [];
+  let current = "";
+  words.forEach((w) => {
+    const candidate = current ? `${current} ${w}` : w;
+    if (candidate.length > maxChars && current) {
+      lines.push(current);
+      current = w;
+    } else {
+      current = candidate;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
 function renderBarChart(containerId, reps, opts) {
   const el = document.getElementById(containerId);
   el.innerHTML = "";
@@ -526,12 +545,18 @@ function renderBarChart(containerId, reps, opts) {
     .sort((a, b) => b.value - a.value);
 
   const width = Math.max(320, Math.round(el.clientWidth) || 640);
-  const height = 300;
   const padding = { top: opts.showDelta ? 50 : 36, right: 20, bottom: 40, left: 20 };
   const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
   const barGap = 32;
   const barWidth = (chartWidth - barGap * (items.length - 1)) / items.length;
+
+  const maxCharsPerLine = Math.max(6, Math.floor(barWidth / 8));
+  const labelLines = items.map((item) => wrapBarLabel(item.label, maxCharsPerLine));
+  const maxLabelLines = Math.max(1, ...labelLines.map((lines) => lines.length));
+  padding.bottom += (maxLabelLines - 1) * 16;
+
+  const height = 300 + (maxLabelLines - 1) * 16;
+  const chartHeight = height - padding.top - padding.bottom;
   const baselineY = padding.top + chartHeight;
 
   const rawMax = Math.max(1, ...items.map((i) => i.value), ...items.map((i) => i.previousValue || 0), opts.referenceLineAt || 0);
@@ -573,7 +598,16 @@ function renderBarChart(containerId, reps, opts) {
     }
 
     const nameLabel = svgEl("text", { x: x + barWidth / 2, y: baselineY + 22, "text-anchor": "middle", class: "bar-name-label" });
-    nameLabel.textContent = item.label;
+    const lines = labelLines[i];
+    if (lines.length === 1) {
+      nameLabel.textContent = lines[0];
+    } else {
+      lines.forEach((line, lineIdx) => {
+        const tspan = svgEl("tspan", { x: x + barWidth / 2, dy: lineIdx === 0 ? 0 : 16 });
+        tspan.textContent = line;
+        nameLabel.appendChild(tspan);
+      });
+    }
     svg.appendChild(nameLabel);
 
     if (opts.onClick) {
@@ -665,6 +699,45 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+function renderColdOutbound(data) {
+  const counts = data.callerCounts.counts || {};
+  const callers = Object.keys(counts).map((name) => ({ name, count: counts[name] }));
+  const totalCalls = callers.reduce((sum, c) => sum + c.count, 0);
+
+  const kpiEl = document.getElementById("cold-outbound-kpi-row");
+  kpiEl.innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">Total Contacts Called</div>
+      <div class="kpi-value">${totalCalls}</div>
+    </div>
+  `;
+
+  renderBarChart("cold-outbound-chart", callers, {
+    valueOf: (r) => r.count,
+    formatValue: (item) => `${item.value}`,
+  });
+
+  const dispoCounts = data.dispositionCounts.counts || {};
+  const dispositions = Object.keys(dispoCounts).map((name) => ({ name, count: dispoCounts[name] }));
+  renderBarChart("cold-outbound-disposition-chart", dispositions, {
+    valueOf: (r) => r.count,
+    formatValue: (item) => `${item.value}`,
+  });
+}
+
+async function loadColdOutbound(start, end) {
+  const banner = document.getElementById("cold-outbound-error-banner");
+  banner.classList.add("hidden");
+  banner.textContent = "";
+  try {
+    const data = await fetchJSON(`/api/cold-outbound?start=${start}&end=${end}`);
+    renderColdOutbound(data);
+  } catch (e) {
+    banner.classList.remove("hidden");
+    banner.textContent = `Cold Outbound data: ${e.message}`;
+  }
+}
+
 let loadToken = 0;
 
 function setLoading(isLoading) {
@@ -684,6 +757,7 @@ async function loadData() {
   const compareEnabled = document.getElementById("compare-checkbox").checked;
 
   loadPowerDialer(start, end); // fire independently — can be slow on a cold cache, shouldn't block the rest
+  loadColdOutbound(start, end); // fire independently — same reasoning
 
   try {
     let curr;

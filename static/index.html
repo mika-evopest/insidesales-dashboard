@@ -14,56 +14,57 @@
         <button data-view="sales" class="view-tab">Sales Team Dashboard</button>
         <button data-view="leaderboard" class="view-tab active">Leaderboard</button>
         <button data-view="marketing" class="view-tab">Marketing Campaign Dashboard</button>
+        <button data-view="cold-outbound" class="view-tab">Cold Outbound</button>
       </nav>
     </div>
   </header>
 
   <main>
-    <div id="view-sales" class="hidden">
-      <div class="toolbar">
-        <div class="range-controls">
-          <div class="range-col">
-            <button data-range="today" class="range-btn">Today</button>
-            <button data-range="yesterday" class="range-btn">Yesterday</button>
-          </div>
-          <div class="range-col">
-            <button data-range="week" class="range-btn">This Week</button>
-            <button data-range="lastweek" class="range-btn">Last Week</button>
-          </div>
-          <div class="range-col">
-            <button data-range="quarter" class="range-btn">This Quarter</button>
-            <button data-range="month" class="range-btn">This Month</button>
-          </div>
-          <div class="range-col">
-            <span class="custom-range-wrap">
-              <button data-range="custom" class="range-btn">Custom</button>
-              <div id="calendar-popup" class="calendar-popup hidden">
-                <div class="calendar-header">
-                  <button id="cal-prev-month" class="calendar-nav" type="button">&lsaquo;</button>
-                  <span id="cal-month-label"></span>
-                  <button id="cal-next-month" class="calendar-nav" type="button">&rsaquo;</button>
-                </div>
-                <div class="calendar-weekdays">
-                  <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
-                </div>
-                <div id="calendar-grid" class="calendar-grid"></div>
-                <div id="calendar-hint" class="calendar-hint">Pick a start date</div>
-              </div>
-            </span>
-            <button data-range="year" class="range-btn">This Year</button>
-          </div>
-          <div class="range-col range-col-refresh">
-            <button id="refresh-data" class="range-btn">Refresh Data</button>
-            <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
-          </div>
+    <div id="range-toolbar" class="toolbar hidden">
+      <div class="range-controls">
+        <div class="range-col">
+          <button data-range="today" class="range-btn">Today</button>
+          <button data-range="yesterday" class="range-btn">Yesterday</button>
         </div>
-
-        <label class="compare-toggle">
-          <input type="checkbox" id="compare-checkbox" checked />
-          Compare to previous period
-        </label>
+        <div class="range-col">
+          <button data-range="week" class="range-btn">This Week</button>
+          <button data-range="lastweek" class="range-btn">Last Week</button>
+        </div>
+        <div class="range-col">
+          <button data-range="quarter" class="range-btn">This Quarter</button>
+          <button data-range="month" class="range-btn">This Month</button>
+        </div>
+        <div class="range-col">
+          <span class="custom-range-wrap">
+            <button data-range="custom" class="range-btn">Custom</button>
+            <div id="calendar-popup" class="calendar-popup hidden">
+              <div class="calendar-header">
+                <button id="cal-prev-month" class="calendar-nav" type="button">&lsaquo;</button>
+                <span id="cal-month-label"></span>
+                <button id="cal-next-month" class="calendar-nav" type="button">&rsaquo;</button>
+              </div>
+              <div class="calendar-weekdays">
+                <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+              </div>
+              <div id="calendar-grid" class="calendar-grid"></div>
+              <div id="calendar-hint" class="calendar-hint">Pick a start date</div>
+            </div>
+          </span>
+          <button data-range="year" class="range-btn">This Year</button>
+        </div>
+        <div class="range-col range-col-refresh">
+          <button id="refresh-data" class="range-btn">Refresh Data</button>
+          <span id="loading-indicator" class="loading-indicator hidden">Loading…</span>
+        </div>
       </div>
 
+      <label class="compare-toggle">
+        <input type="checkbox" id="compare-checkbox" checked />
+        Compare to previous period
+      </label>
+    </div>
+
+    <div id="view-sales" class="hidden">
       <div class="dashboard-grid">
         <div class="widget widget-wide">
           <h2>Overview</h2>
@@ -145,6 +146,28 @@
 
     <div id="view-marketing" class="hidden">
       <p class="placeholder-note">Marketing campaign data isn't wired up yet — let me know what you'd like to see here.</p>
+    </div>
+
+    <div id="view-cold-outbound" class="hidden">
+      <div class="dashboard-grid">
+        <div class="widget widget-wide cold-outbound-summary">
+          <div id="cold-outbound-kpi-row" class="kpi-row"></div>
+        </div>
+
+        <div class="dashboard-row">
+          <div class="widget">
+            <h2>Sales Rep Call Count</h2>
+            <div id="cold-outbound-chart" class="bar-wrap"></div>
+          </div>
+
+          <div class="widget">
+            <h2>Call Outcome</h2>
+            <div id="cold-outbound-disposition-chart" class="bar-wrap"></div>
+          </div>
+        </div>
+      </div>
+
+      <p id="cold-outbound-error-banner" class="error hidden"></p>
     </div>
   </main>
 
