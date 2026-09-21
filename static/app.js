@@ -278,10 +278,12 @@ document.querySelectorAll(".view-tab").forEach((tab) => {
     document.querySelectorAll(".view-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const view = tab.dataset.view;
-    ["sales", "leaderboard", "marketing", "cold-outbound"].forEach((v) => {
+    ["sales", "leaderboard", "marketing", "cold-outbound", "inbound-calls"].forEach((v) => {
       document.getElementById(`view-${v}`).classList.toggle("hidden", view !== v);
     });
-    document.getElementById("range-toolbar").classList.toggle("hidden", view !== "sales" && view !== "cold-outbound");
+    document
+      .getElementById("range-toolbar")
+      .classList.toggle("hidden", view !== "sales" && view !== "cold-outbound" && view !== "inbound-calls");
     if (view === "leaderboard") loadLeaderboard();
   });
 });
@@ -355,8 +357,8 @@ function renderTopKPIRow(curr, prev) {
   });
 }
 
-function renderKPIRow(curr, prev) {
-  const el = document.getElementById("kpi-row");
+function renderKPIRow(curr, prev, elId = "kpi-row", { includeTotalClosedRate = true } = {}) {
+  const el = document.getElementById(elId);
   el.innerHTML = "";
 
   const leads = curr.totals.leads;
@@ -403,7 +405,10 @@ function renderKPIRow(curr, prev) {
           ? deltaHTML(closeRate - prev.totals.closeRate)
           : "",
     },
-    {
+  ];
+
+  if (includeTotalClosedRate) {
+    items.push({
       label: "Total Closed Rate",
       big: curr.totals.totalClosedRate !== null ? `${curr.totals.totalClosedRate}%` : "—",
       small: `${curr.totals.closedLeads} closed / ${qualified} qualified`,
@@ -411,8 +416,8 @@ function renderKPIRow(curr, prev) {
         prev && curr.totals.totalClosedRate !== null && prev.totals.totalClosedRate !== null
           ? deltaHTML(curr.totals.totalClosedRate - prev.totals.totalClosedRate)
           : "",
-    },
-  ];
+    });
+  }
 
   items.forEach((item) => {
     const card = document.createElement("div");
@@ -428,7 +433,7 @@ function renderKPIRow(curr, prev) {
 }
 
 function renderSources(curr, prev) {
-  const order = ["Meta", "Inbound", "Website", "Other"];
+  const order = ["Inbound"];
   const items = order.map((name) => ({
     name,
     _prev: prev ? { count: prev.totals.sources[name] || 0 } : null,
@@ -441,7 +446,7 @@ function renderSources(curr, prev) {
 }
 
 function renderClosedSources(curr, prev) {
-  const order = ["Meta", "Inbound", "Website", "Other"];
+  const order = ["Inbound"];
   const items = order.map((name) => ({
     name,
     _prev: prev ? { count: prev.totals.closedSources[name] || 0 } : null,
@@ -653,17 +658,17 @@ function closeRepDealsModal() {
   document.getElementById("rep-deals-modal").classList.add("hidden");
 }
 
-async function openRepDealsModal(repName) {
+async function openRepDealsModal(repName, endpoint = "/api/rep-deals", titleSuffix = "Sold Contracts") {
   const modal = document.getElementById("rep-deals-modal");
   const body = document.getElementById("rep-deals-body");
-  document.getElementById("rep-deals-title").textContent = `${repName} — Sold Contracts`;
+  document.getElementById("rep-deals-title").textContent = `${repName} — ${titleSuffix}`;
   body.innerHTML = `<p class="deal-table-empty">Loading…</p>`;
   modal.classList.remove("hidden");
 
   try {
     const start = fmtDate(currentRange.start);
     const end = fmtDate(currentRange.end);
-    const data = await fetchJSON(`/api/rep-deals?rep=${encodeURIComponent(repName)}&start=${start}&end=${end}`);
+    const data = await fetchJSON(`${endpoint}?rep=${encodeURIComponent(repName)}&start=${start}&end=${end}`);
     if (!data.deals.length) {
       body.innerHTML = `<p class="deal-table-empty">No closed contracts in this date range.</p>`;
       return;
@@ -680,6 +685,42 @@ async function openRepDealsModal(repName) {
     body.innerHTML = `
       <table class="deal-table">
         <thead><tr><th>Lead</th><th>Contract Value</th><th>Closed Date</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    body.innerHTML = `<p class="deal-table-empty">Failed to load: ${e.message}</p>`;
+  }
+}
+
+async function openQualifiedLeadsModal(repName) {
+  const modal = document.getElementById("rep-deals-modal");
+  const body = document.getElementById("rep-deals-body");
+  document.getElementById("rep-deals-title").textContent = `${repName} — Qualified Leads`;
+  body.innerHTML = `<p class="deal-table-empty">Loading…</p>`;
+  modal.classList.remove("hidden");
+
+  try {
+    const start = fmtDate(currentRange.start);
+    const end = fmtDate(currentRange.end);
+    const data = await fetchJSON(
+      `/api/inbound-qualified-leads?rep=${encodeURIComponent(repName)}&start=${start}&end=${end}`
+    );
+    if (!data.leads.length) {
+      body.innerHTML = `<p class="deal-table-empty">No qualified leads in this date range.</p>`;
+      return;
+    }
+    const rows = data.leads
+      .map(
+        (l) => `<tr>
+          <td>${l.name}</td>
+          <td>${formatDealDate(l.dateAdded)}</td>
+        </tr>`
+      )
+      .join("");
+    body.innerHTML = `
+      <table class="deal-table">
+        <thead><tr><th>Lead</th><th>Date Added</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     `;
@@ -738,6 +779,35 @@ async function loadColdOutbound(start, end) {
   }
 }
 
+async function loadInboundCalls(start, end) {
+  const banner = document.getElementById("inbound-calls-error-banner");
+  banner.classList.add("hidden");
+  banner.textContent = "";
+  try {
+    const data = await fetchJSON(`/api/inbound-calls?start=${start}&end=${end}`);
+    renderKPIRow(data, null, "inbound-kpi-row", { includeTotalClosedRate: false });
+    renderBarChart("inbound-sold-chart", data.reps, {
+      valueOf: (r) => r.closedCount,
+      formatValue: (item) => `${item.value} sold`,
+      onClick: (rep) => openRepDealsModal(rep.name, "/api/inbound-rep-deals"),
+    });
+    renderBarChart("inbound-qualified-chart", data.reps, {
+      valueOf: (r) => r.qualifiedLeads,
+      formatValue: (item) => `${item.value}`,
+      onClick: (rep) => openQualifiedLeadsModal(rep.name),
+    });
+    renderBarChart("inbound-close-rate-chart", data.reps, {
+      valueOf: (r) => r.qualifiedCloseRate || 0,
+      formatValue: (item) => (item.rep.qualifiedCloseRate !== null ? `${item.rep.qualifiedCloseRate}%` : "—"),
+      referenceLineAt: 100,
+      referenceLabel: "100%",
+    });
+  } catch (e) {
+    banner.classList.remove("hidden");
+    banner.textContent = `Inbound Calls data: ${e.message}`;
+  }
+}
+
 let loadToken = 0;
 
 function setLoading(isLoading) {
@@ -758,6 +828,7 @@ async function loadData() {
 
   loadPowerDialer(start, end); // fire independently — can be slow on a cold cache, shouldn't block the rest
   loadColdOutbound(start, end); // fire independently — same reasoning
+  loadInboundCalls(start, end); // fire independently — same reasoning
 
   try {
     let curr;

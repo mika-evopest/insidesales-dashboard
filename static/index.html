@@ -15,6 +15,7 @@
         <button data-view="leaderboard" class="view-tab active">Leaderboard</button>
         <button data-view="marketing" class="view-tab">Marketing Campaign Dashboard</button>
         <button data-view="cold-outbound" class="view-tab">Cold Outbound</button>
+        <button data-view="inbound-calls" class="view-tab">Inbound Calls</button>
       </nav>
     </div>
   </header>
@@ -168,6 +169,34 @@
       </div>
 
       <p id="cold-outbound-error-banner" class="error hidden"></p>
+    </div>
+
+    <div id="view-inbound-calls" class="hidden">
+      <div class="dashboard-grid">
+        <div class="widget widget-wide">
+          <h2>Inbound Leads</h2>
+          <div id="inbound-kpi-row" class="kpi-row"></div>
+        </div>
+
+        <div class="dashboard-row dashboard-row-3">
+          <div class="widget">
+            <h2>Sold Contracts by Sales Rep</h2>
+            <div id="inbound-sold-chart" class="bar-wrap"></div>
+          </div>
+
+          <div class="widget">
+            <h2>Qualified Leads by Rep</h2>
+            <div id="inbound-qualified-chart" class="bar-wrap"></div>
+          </div>
+
+          <div class="widget">
+            <h2>Closed / Qualified by Sales Rep</h2>
+            <div id="inbound-close-rate-chart" class="bar-wrap"></div>
+          </div>
+        </div>
+      </div>
+
+      <p id="inbound-calls-error-banner" class="error hidden"></p>
     </div>
   </main>
 

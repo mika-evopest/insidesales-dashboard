@@ -22,7 +22,6 @@ BUSINESS_TZ = ZoneInfo("America/Chicago")
 
 REPS = [
     {"name": "Jay Reyes", "pipelineId": "T1XpjVLy3lDfLVWY7f9D", "closedWonStageId": "47bfd32a-1e99-46af-9a47-4723a9af3e36"},
-    {"name": "Sergio Anaya", "pipelineId": "4QyVIDo2jPdiPQUflkLd", "closedWonStageId": "e05e0bd7-c78f-4906-a16b-edcaa56fc8e8"},
     {"name": "Daniel Barba", "pipelineId": "I7YdjQ5jlYF21SEl5B5g", "closedWonStageId": "342ebbe5-29be-46d7-aa19-4d486e841233"},
 ]
 
@@ -45,7 +44,7 @@ COLD_OUTBOUND_DISPOSITION_DATE_FIELD_ID = "kFn9EOOlCzR4q8cLRfGk"
 
 # "Last Outbound Caller" picklist options in the Cold Outbound subaccount —
 # shown on the chart even when a rep has zero calls in the selected range.
-COLD_OUTBOUND_CALLERS = ["Jay Reyes", "Sergio Anaya", "Daniel Barba"]
+COLD_OUTBOUND_CALLERS = ["Jay Reyes", "Daniel Barba"]
 
 # Fixed call-outcome categories, always shown even at zero count. "Last Call
 # Dispositon" is a free-text field in HighLevel (no picklist), so this list is
@@ -311,7 +310,7 @@ def is_test_opportunity(opp):
     return "test" in (opp.get("name") or "").lower()
 
 
-def rep_sales(rep, start, end):
+def rep_sales(rep, start, end, allowed_contact_ids=None):
     opps = get_opportunities_for(rep["pipelineId"], rep["closedWonStageId"])
     excluded_ids = get_excluded_contact_ids()
     count = 0
@@ -319,6 +318,8 @@ def rep_sales(rep, start, end):
     missing_closed_date = 0
     for opp in opps:
         if is_test_opportunity(opp) or opp.get("contactId") in excluded_ids:
+            continue
+        if allowed_contact_ids is not None and opp.get("contactId") not in allowed_contact_ids:
             continue
         closed_dt = parse_date(custom_field_value(opp.get("customFields"), CLOSED_DATE_FIELD_ID))
         missing = closed_dt is None
@@ -339,12 +340,14 @@ def rep_sales(rep, start, end):
     }
 
 
-def rep_deals(rep, start, end):
+def rep_deals(rep, start, end, allowed_contact_ids=None):
     opps = get_opportunities_for(rep["pipelineId"], rep["closedWonStageId"])
     excluded_ids = get_excluded_contact_ids()
     deals = []
     for opp in opps:
         if is_test_opportunity(opp) or opp.get("contactId") in excluded_ids:
+            continue
+        if allowed_contact_ids is not None and opp.get("contactId") not in allowed_contact_ids:
             continue
         closed_dt = parse_date(custom_field_value(opp.get("customFields"), CLOSED_DATE_FIELD_ID))
         missing = closed_dt is None
@@ -367,6 +370,43 @@ def handle_rep_deals(rep_name, start, end):
     if not rep:
         raise ValueError(f"Unknown rep: {rep_name}")
     return {"rep": rep_name, "deals": rep_deals(rep, start, end)}
+
+
+def handle_inbound_rep_deals(rep_name, start, end):
+    rep = next((r for r in REPS if r["name"] == rep_name), None)
+    if not rep:
+        raise ValueError(f"Unknown rep: {rep_name}")
+    inbound_contact_ids = {c.get("id") for c in get_all_contacts_cached() if is_inbound_source(c.get("source"))}
+    return {"rep": rep_name, "deals": rep_deals(rep, start, end, allowed_contact_ids=inbound_contact_ids)}
+
+
+def rep_qualified_lead_list(contacts, rep_name, start, end):
+    leads = []
+    for c in contacts:
+        added = local_date(parse_date(c.get("dateAdded")))
+        if not in_range(added, start, end):
+            continue
+        status = custom_field_value(c.get("customFields"), QUALIFICATION_STATUS_FIELD_ID)
+        if status != "Qualified":
+            continue
+        reps = custom_field_value(c.get("customFields"), FIRST_TOUCH_QUALIFIER_FIELD_ID)
+        reps = reps if isinstance(reps, list) else ([reps] if reps else [])
+        if rep_name not in reps:
+            continue
+        leads.append({
+            "name": c.get("contactName") or c.get("firstName") or "Unnamed",
+            "dateAdded": added.isoformat(),
+        })
+    leads.sort(key=lambda d: d["dateAdded"], reverse=True)
+    return leads
+
+
+def handle_inbound_qualified_leads(rep_name, start, end):
+    if not any(r["name"] == rep_name for r in REPS):
+        raise ValueError(f"Unknown rep: {rep_name}")
+    contacts = get_contacts_for(start)
+    inbound_contacts = [c for c in contacts if is_inbound_source(c.get("source"))]
+    return {"rep": rep_name, "leads": rep_qualified_lead_list(inbound_contacts, rep_name, start, end)}
 
 
 def handle_sales(start, end):
@@ -500,29 +540,23 @@ def count_closed_leads(contacts, start, end):
     return count
 
 
-def categorize_source(source):
-    s = (source or "").lower()
-    if "meta" in s:
-        return "Meta"
-    if "inbound" in s:
-        return "Inbound"
-    if "website" in s or "contact us form" in s:
-        return "Website"
-    return "Other"
+def is_inbound_source(source):
+    return "inbound" in (source or "").lower()
 
 
 def count_sources(contacts, start, end):
-    counts = {"Meta": 0, "Inbound": 0, "Website": 0, "Other": 0}
+    counts = {"Inbound": 0}
     for c in contacts:
         added = local_date(parse_date(c.get("dateAdded")))
         if not in_range(added, start, end):
             continue
-        counts[categorize_source(c.get("source"))] += 1
+        if is_inbound_source(c.get("source")):
+            counts["Inbound"] += 1
     return counts
 
 
 def count_closed_sources(contacts, start, end):
-    counts = {"Meta": 0, "Inbound": 0, "Website": 0, "Other": 0}
+    counts = {"Inbound": 0}
     for c in contacts:
         added = local_date(parse_date(c.get("dateAdded")))
         if not in_range(added, start, end):
@@ -530,13 +564,14 @@ def count_closed_sources(contacts, start, end):
         stage = custom_field_value(c.get("customFields"), LEAD_STAGE_FIELD_ID)
         if stage != "Closed/Won":
             continue
-        counts[categorize_source(c.get("source"))] += 1
+        if is_inbound_source(c.get("source")):
+            counts["Inbound"] += 1
     return counts
 
 
-def compute_period_metrics(start, end, contacts):
+def compute_period_metrics(start, end, contacts, allowed_contact_ids=None):
     with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
-        sales_list = list(pool.map(lambda rep: rep_sales(rep, start, end), REPS))
+        sales_list = list(pool.map(lambda rep: rep_sales(rep, start, end, allowed_contact_ids), REPS))
 
     all_contacts = get_all_contacts_cached()
     rolling_pool_stale = first_touch_qualifier_is_stale(all_contacts)
@@ -548,6 +583,7 @@ def compute_period_metrics(start, end, contacts):
         qualified = rep_qualified_leads_count(contacts, rep["name"], start, end)
         closed_leads = rep_closed_leads_count(contacts, rep["name"], start, end)
         close_rate = round(closed_leads / leads * 100, 1) if leads else None
+        qualified_close_rate = round(sales["count"] / qualified * 100, 1) if qualified else None
         ftq_pool = rep_ftq_pool_count(all_contacts, rep["name"])
         # Leaderboard close rate = closed deals this period ÷ the rep's entire
         # all-time First-Touch-Qualifier lead pool (not scoped to this period —
@@ -568,6 +604,7 @@ def compute_period_metrics(start, end, contacts):
             "qualifiedLeads": qualified,
             "closedLeads": closed_leads,
             "closeRate": close_rate,
+            "qualifiedCloseRate": qualified_close_rate,
             "leaderboardCloseRate": leaderboard_close_rate,
             "pctOfTotal": pct_of_total,
         })
@@ -598,6 +635,17 @@ def compute_period_metrics(start, end, contacts):
 def handle_performance(start, end):
     contacts = get_contacts_for(start)
     return compute_period_metrics(start, end, contacts)
+
+
+def handle_inbound_calls(start, end):
+    contacts = get_contacts_for(start)
+    inbound_contacts = [c for c in contacts if is_inbound_source(c.get("source"))]
+    # Sold-contract counts come from opportunities, not the (dateAdded-windowed)
+    # contacts list above, so build the inbound contact-id set from the full,
+    # unbounded contact history — a deal can close for a contact added well
+    # before `start`.
+    inbound_contact_ids = {c.get("id") for c in get_all_contacts_cached() if is_inbound_source(c.get("source"))}
+    return compute_period_metrics(start, end, inbound_contacts, allowed_contact_ids=inbound_contact_ids)
 
 
 def handle_performance_compare(start, end, prev_start, prev_end):
@@ -915,7 +963,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 500)
             return
 
-        if parsed.path in ("/api/sales", "/api/qualification", "/api/performance"):
+        if parsed.path in ("/api/sales", "/api/qualification", "/api/performance", "/api/inbound-calls"):
             try:
                 start = datetime.fromisoformat(qs["start"][0]).date()
                 end = datetime.fromisoformat(qs["end"][0]).date()
@@ -927,6 +975,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(cached(("sales", start, end), lambda: handle_sales(start, end)))
                 elif parsed.path == "/api/qualification":
                     self.send_json(cached(("qualification", start, end), lambda: handle_qualification(start, end)))
+                elif parsed.path == "/api/inbound-calls":
+                    self.send_json(cached(("inbound-calls", start, end), lambda: handle_inbound_calls(start, end)))
                 else:
                     self.send_json(cached(("performance", start, end), lambda: handle_performance(start, end)))
             except ConfigError as e:
@@ -960,6 +1010,34 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self.send_json(cached(("rep-deals", rep_name, start, end), lambda: handle_rep_deals(rep_name, start, end)))
+            except ConfigError as e:
+                self.send_json({"error": str(e)}, 400)
+            except ValueError as e:
+                self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+            return
+
+        if parsed.path in ("/api/inbound-rep-deals", "/api/inbound-qualified-leads"):
+            try:
+                rep_name = qs["rep"][0]
+                start = datetime.fromisoformat(qs["start"][0]).date()
+                end = datetime.fromisoformat(qs["end"][0]).date()
+            except (KeyError, ValueError):
+                self.send_json({"error": "rep, start and end query params are required"}, 400)
+                return
+            try:
+                if parsed.path == "/api/inbound-rep-deals":
+                    self.send_json(
+                        cached(("inbound-rep-deals", rep_name, start, end), lambda: handle_inbound_rep_deals(rep_name, start, end))
+                    )
+                else:
+                    self.send_json(
+                        cached(
+                            ("inbound-qualified-leads", rep_name, start, end),
+                            lambda: handle_inbound_qualified_leads(rep_name, start, end),
+                        )
+                    )
             except ConfigError as e:
                 self.send_json({"error": str(e)}, 400)
             except ValueError as e:
