@@ -543,8 +543,7 @@ function wrapBarLabel(text, maxChars) {
 // Charts drawn inside a hidden tab measure 0px wide and render shrunken, so
 // redraw each chart whenever its container's width actually changes.
 // Small width jitter (e.g. a scrollbar appearing as charts redraw) is ignored
-// so redraws can't feed back into each other, and resize redraws skip the
-// bar grow-in animation.
+// so redraws can't feed back into each other.
 const barChartState = new Map();
 const barChartObserver = new ResizeObserver((entries) => {
   requestAnimationFrame(() => {
@@ -552,13 +551,13 @@ const barChartObserver = new ResizeObserver((entries) => {
       const state = barChartState.get(entry.target.id);
       const w = Math.round(entry.target.clientWidth);
       if (state && w > 0 && Math.abs(w - state.width) > 24) {
-        renderBarChart(entry.target.id, state.reps, state.opts, { animate: false });
+        renderBarChart(entry.target.id, state.reps, state.opts);
       }
     }
   });
 });
 
-function renderBarChart(containerId, reps, opts, { animate = true } = {}) {
+function renderBarChart(containerId, reps, opts) {
   const el = document.getElementById(containerId);
   el.innerHTML = "";
   if (!barChartState.has(containerId)) barChartObserver.observe(el);
@@ -593,13 +592,6 @@ function renderBarChart(containerId, reps, opts, { animate = true } = {}) {
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width: "100%", height, class: "bar-chart" });
 
-  const defs = svgEl("defs", {});
-  const gradient = svgEl("linearGradient", { id: "bar-gradient", x1: 0, y1: 0, x2: 0, y2: 1 });
-  gradient.appendChild(svgEl("stop", { offset: "0%", "stop-color": "#4cc247" }));
-  gradient.appendChild(svgEl("stop", { offset: "100%", "stop-color": "#005136" }));
-  defs.appendChild(gradient);
-  svg.appendChild(defs);
-
   [0.25, 0.5, 0.75].forEach((frac) => {
     const gy = baselineY - frac * chartHeight;
     svg.appendChild(svgEl("line", { x1: padding.left, x2: width - padding.right, y1: gy, y2: gy, class: "bar-grid-line" }));
@@ -618,9 +610,7 @@ function renderBarChart(containerId, reps, opts, { animate = true } = {}) {
 
     const barHeight = (item.value / maxValue) * chartHeight;
     const y = baselineY - barHeight;
-    const bar = svgEl("rect", { x, y, width: barWidth, height: Math.max(barHeight, 0), rx: 8, class: "bar-fill-rect" });
-    if (animate) bar.style.animationDelay = `${i * 70}ms`;
-    else bar.style.animation = "none";
+    const bar = svgEl("rect", { x, y, width: barWidth, height: Math.max(barHeight, 0), rx: 8, fill: "#2f9e3a", class: "bar-fill-rect" });
     group.appendChild(bar);
 
     // Sit labels above whichever is taller — this period's bar or last period's outline.
