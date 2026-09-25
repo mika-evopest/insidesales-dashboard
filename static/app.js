@@ -207,8 +207,12 @@ document.querySelectorAll(".range-btn").forEach((btn) => {
 document.getElementById("compare-checkbox").addEventListener("change", loadData);
 
 document.getElementById("refresh-data").addEventListener("click", async () => {
-  await fetch("/api/refresh");
-  loadData();
+  setLoading(true);
+  try {
+    await fetch("/api/refresh");
+  } finally {
+    loadData();
+  }
 });
 
 function powerDialerCloseRate(d) {
@@ -536,9 +540,29 @@ function wrapBarLabel(text, maxChars) {
   return lines;
 }
 
-function renderBarChart(containerId, reps, opts) {
+// Charts drawn inside a hidden tab measure 0px wide and render shrunken, so
+// redraw each chart whenever its container's width actually changes.
+// Small width jitter (e.g. a scrollbar appearing as charts redraw) is ignored
+// so redraws can't feed back into each other, and resize redraws skip the
+// bar grow-in animation.
+const barChartState = new Map();
+const barChartObserver = new ResizeObserver((entries) => {
+  requestAnimationFrame(() => {
+    for (const entry of entries) {
+      const state = barChartState.get(entry.target.id);
+      const w = Math.round(entry.target.clientWidth);
+      if (state && w > 0 && Math.abs(w - state.width) > 24) {
+        renderBarChart(entry.target.id, state.reps, state.opts, { animate: false });
+      }
+    }
+  });
+});
+
+function renderBarChart(containerId, reps, opts, { animate = true } = {}) {
   const el = document.getElementById(containerId);
   el.innerHTML = "";
+  if (!barChartState.has(containerId)) barChartObserver.observe(el);
+  barChartState.set(containerId, { reps, opts, width: Math.round(el.clientWidth) });
 
   const items = reps
     .map((r) => ({
@@ -550,7 +574,7 @@ function renderBarChart(containerId, reps, opts) {
     .sort((a, b) => b.value - a.value);
 
   const width = Math.max(320, Math.round(el.clientWidth) || 640);
-  const padding = { top: opts.showDelta ? 50 : 36, right: 20, bottom: 40, left: 20 };
+  const padding = { top: opts.showDelta ? 58 : 36, right: 20, bottom: 40, left: 20 };
   const chartWidth = width - padding.left - padding.right;
   const barGap = 32;
   const barWidth = (chartWidth - barGap * (items.length - 1)) / items.length;
@@ -569,23 +593,42 @@ function renderBarChart(containerId, reps, opts) {
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width: "100%", height, class: "bar-chart" });
 
+  const defs = svgEl("defs", {});
+  const gradient = svgEl("linearGradient", { id: "bar-gradient", x1: 0, y1: 0, x2: 0, y2: 1 });
+  gradient.appendChild(svgEl("stop", { offset: "0%", "stop-color": "#4cc247" }));
+  gradient.appendChild(svgEl("stop", { offset: "100%", "stop-color": "#005136" }));
+  defs.appendChild(gradient);
+  svg.appendChild(defs);
+
+  [0.25, 0.5, 0.75].forEach((frac) => {
+    const gy = baselineY - frac * chartHeight;
+    svg.appendChild(svgEl("line", { x1: padding.left, x2: width - padding.right, y1: gy, y2: gy, class: "bar-grid-line" }));
+  });
+
   items.forEach((item, i) => {
     const x = padding.left + i * (barWidth + barGap);
+    const group = svgEl("g", { class: "bar-group" });
 
     if (item.previousValue !== null && item.value > 0) {
       const ghostHeight = (item.previousValue / maxValue) * chartHeight;
-      svg.appendChild(
+      group.appendChild(
         svgEl("rect", { x, y: baselineY - ghostHeight, width: barWidth, height: Math.max(ghostHeight, 0), rx: 6, class: "bar-ghost-rect" })
       );
     }
 
     const barHeight = (item.value / maxValue) * chartHeight;
     const y = baselineY - barHeight;
-    svg.appendChild(svgEl("rect", { x, y, width: barWidth, height: Math.max(barHeight, 0), rx: 6, class: "bar-fill-rect" }));
+    const bar = svgEl("rect", { x, y, width: barWidth, height: Math.max(barHeight, 0), rx: 8, class: "bar-fill-rect" });
+    if (animate) bar.style.animationDelay = `${i * 70}ms`;
+    else bar.style.animation = "none";
+    group.appendChild(bar);
 
-    const valueLabel = svgEl("text", { x: x + barWidth / 2, y: y - 10, "text-anchor": "middle", class: "bar-value-label" });
+    // Sit labels above whichever is taller — this period's bar or last period's outline.
+    const ghostTop = item.previousValue !== null && item.value > 0 ? baselineY - (item.previousValue / maxValue) * chartHeight : baselineY;
+    const labelY = Math.min(y, ghostTop);
+    const valueLabel = svgEl("text", { x: x + barWidth / 2, y: labelY - 10, "text-anchor": "middle", class: "bar-value-label" });
     valueLabel.textContent = opts.formatValue(item);
-    svg.appendChild(valueLabel);
+    group.appendChild(valueLabel);
 
     if (opts.showDelta && item.previousValue !== null && item.previousValue !== 0) {
       const change = ((item.value - item.previousValue) / item.previousValue) * 100;
@@ -594,12 +637,12 @@ function renderBarChart(containerId, reps, opts) {
       const arrow = rounded > 0 ? "▲" : rounded < 0 ? "▼" : "▬";
       const deltaLabel = svgEl("text", {
         x: x + barWidth / 2,
-        y: y - 24,
+        y: labelY - 32,
         "text-anchor": "middle",
         class: `bar-delta-label ${cls}`,
       });
       deltaLabel.textContent = `${arrow} ${Math.abs(rounded)}% vs prev`;
-      svg.appendChild(deltaLabel);
+      group.appendChild(deltaLabel);
     }
 
     const nameLabel = svgEl("text", { x: x + barWidth / 2, y: baselineY + 22, "text-anchor": "middle", class: "bar-name-label" });
@@ -613,7 +656,7 @@ function renderBarChart(containerId, reps, opts) {
         nameLabel.appendChild(tspan);
       });
     }
-    svg.appendChild(nameLabel);
+    group.appendChild(nameLabel);
 
     if (opts.onClick) {
       const hitRect = svgEl("rect", {
@@ -625,11 +668,20 @@ function renderBarChart(containerId, reps, opts) {
         class: "bar-hit-rect",
       });
       hitRect.addEventListener("click", () => opts.onClick(item.rep));
-      svg.appendChild(hitRect);
+      group.appendChild(hitRect);
     }
+    svg.appendChild(group);
   });
 
   svg.appendChild(svgEl("line", { x1: padding.left, x2: width - padding.right, y1: baselineY, y2: baselineY, class: "bar-axis-line" }));
+
+  if (items.some((item) => item.previousValue !== null && item.value > 0)) {
+    const legendX = width - padding.right - 104;
+    svg.appendChild(svgEl("rect", { x: legendX, y: 4, width: 12, height: 12, rx: 3, class: "bar-ghost-rect" }));
+    const legendLabel = svgEl("text", { x: legendX + 18, y: 14, class: "bar-ref-label" });
+    legendLabel.textContent = "Previous period";
+    svg.appendChild(legendLabel);
+  }
 
   if (opts.referenceLineAt) {
     const refY = baselineY - (opts.referenceLineAt / maxValue) * chartHeight;

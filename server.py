@@ -90,7 +90,7 @@ class ConfigError(Exception):
     pass
 
 
-def hl_request(path, params=None, method="GET", api_key=None):
+def hl_request(path, params=None, method="GET", api_key=None, body=None):
     api_key = api_key or API_KEY
     if not api_key:
         raise ConfigError("HighLevel API key is not set. Add it to .env and restart the server.")
@@ -98,7 +98,10 @@ def hl_request(path, params=None, method="GET", api_key=None):
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, method=method)
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
     req.add_header("Version", API_VERSION)
     req.add_header("Accept", "application/json")
@@ -190,86 +193,126 @@ def fetch_all_opportunities(pipeline_id, stage_id):
     return results
 
 
-def paginate_contacts(max_pages, should_stop=None, location_id=None, api_key=None):
-    location_id = location_id or LOCATION_ID
-    results = []
-    start_after = None
-    start_after_id = None
-    for _ in range(max_pages):
-        params = {"locationId": location_id, "limit": 100}
-        if start_after:
-            params["startAfter"] = start_after
-        if start_after_id:
-            params["startAfterId"] = start_after_id
-        data = hl_request("/contacts/", params, api_key=api_key)
-        page = data.get("contacts", data.get("data", []))
-        results.extend(page)
-        if not page:
-            break
-        if should_stop and should_stop(page):
-            break
-        meta = data.get("meta", {})
-        next_after = meta.get("startAfter")
-        next_after_id = meta.get("startAfterId")
-        if len(page) < 100 or not next_after_id:
-            break
-        start_after, start_after_id = next_after, next_after_id
-    return results
+SEARCH_PAGE_LIMIT = 500
+SEARCH_RESULT_WINDOW = 10000  # HighLevel rejects page * pageLimit beyond this
+DELTA_PAGE_LIMIT = 100
+# Full rescans exist only to drop contacts deleted in HighLevel — a delta
+# sync can see edits and new contacts, but not deletions.
+FULL_RESYNC_SECONDS = 1800
+# Re-pull a few minutes before the last-seen update so clock skew or
+# near-simultaneous edits can't slip between two delta syncs.
+DELTA_OVERLAP_MS = 5 * 60 * 1000
 
 
-def fetch_all_contacts(range_start):
-    # Contacts come back newest-first (dateAdded desc), so we can stop as soon
-    # as a page's oldest contact falls before the requested range.
-    def should_stop(page):
-        oldest_in_page = parse_date(page[-1].get("dateAdded"))
-        return bool(oldest_in_page and oldest_in_page.astimezone(BUSINESS_TZ).date() < range_start)
-
-    return paginate_contacts(max_pages=100, should_stop=should_stop)  # safety cap: 100 pages x 100 = 10000
+def _updated_ms(contact):
+    d = parse_date(contact.get("dateUpdated") or contact.get("dateAdded"))
+    return int(d.timestamp() * 1000) if d else 0
 
 
-def fetch_all_contacts_unbounded():
-    # Full scan — needed for fields like "Last Outbound Call" that can be set
-    # on any contact regardless of when it was originally added as a lead, so
-    # the dateAdded-based early exit above doesn't apply.
-    return paginate_contacts(max_pages=200)  # safety cap: 200 pages x 100 = 20000
+class ContactStore:
+    # Holds every contact in a HighLevel location in memory. The full scan
+    # (~23 pages of 500 via /contacts/search, mostly in parallel) only runs at startup and every
+    # FULL_RESYNC_SECONDS; every other sync — including the Refresh Data
+    # button — pulls just the contacts updated since the last sync, which is
+    # usually a single request.
+    def __init__(self, location_id, api_key):
+        self.location_id = location_id
+        self.api_key = api_key
+        self._by_id = {}
+        self._high_water_ms = 0
+        self._full_synced_at = None
+        self._synced_at = None
+        self._lock = threading.Lock()  # one sync at a time; concurrent callers wait and reuse it
 
+    def _search(self, sort_field, page_limit, should_stop=None, start_after=None):
+        results = []
+        search_after = start_after
+        for _ in range(200):  # safety cap: 200 pages x 500 = 100000
+            body = {
+                "locationId": self.location_id,
+                "pageLimit": page_limit,
+                "sort": [{"field": sort_field, "direction": "desc"}],
+            }
+            if search_after:
+                body["searchAfter"] = search_after
+            data = hl_request("/contacts/search", method="POST", body=body, api_key=self.api_key)
+            page = data.get("contacts", [])
+            results.extend(page)
+            if len(page) < page_limit or (should_stop and should_stop(page)):
+                break
+            search_after = page[-1].get("searchAfter")
+            if not search_after:
+                break
+        return results
 
-def fetch_all_cold_outbound_contacts():
-    # Full scan against the Cold Outbound subaccount — same reasoning as
-    # fetch_all_contacts_unbounded: "Last Outbound Call" can be set on any
-    # contact regardless of dateAdded.
-    return paginate_contacts(max_pages=200, location_id=COLD_OUTBOUND_LOCATION_ID, api_key=COLD_OUTBOUND_API_KEY)
+    def _search_page(self, page_number):
+        body = {
+            "locationId": self.location_id,
+            "page": page_number,
+            "pageLimit": SEARCH_PAGE_LIMIT,
+            "sort": [{"field": "dateAdded", "direction": "desc"}],
+        }
+        return hl_request("/contacts/search", method="POST", body=body, api_key=self.api_key)
+
+    def _full_sync(self):
+        # Numbered pages can be fetched in parallel, but HighLevel caps them at
+        # 10000 results — anything past that continues via the searchAfter cursor.
+        first = self._search_page(1)
+        total = first.get("total") or 0
+        numbered_pages = min(-(-total // SEARCH_PAGE_LIMIT), SEARCH_RESULT_WINDOW // SEARCH_PAGE_LIMIT)
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            rest = list(pool.map(self._search_page, range(2, numbered_pages + 1)))
+        pages = [first.get("contacts", [])] + [d.get("contacts", []) for d in rest]
+        contacts = [c for page in pages for c in page]
+        last_page = pages[-1]
+        if total > SEARCH_RESULT_WINDOW and len(last_page) == SEARCH_PAGE_LIMIT and last_page[-1].get("searchAfter"):
+            contacts += self._search("dateAdded", SEARCH_PAGE_LIMIT, start_after=last_page[-1]["searchAfter"])
+        # Contacts added mid-scan can shift page boundaries and duplicate a
+        # row (deduped here) or skip one (picked up by the next delta sync).
+        self._by_id = {c["id"]: c for c in contacts}
+        self._high_water_ms = max((_updated_ms(c) for c in contacts), default=0)
+        self._full_synced_at = time.monotonic()
+
+    def _delta_sync(self):
+        cutoff = self._high_water_ms - DELTA_OVERLAP_MS
+        changed = self._search("dateUpdated", DELTA_PAGE_LIMIT, should_stop=lambda page: _updated_ms(page[-1]) < cutoff)
+        merged = dict(self._by_id)  # swap in a new dict so readers never see one mid-update
+        for c in changed:
+            merged[c["id"]] = c
+        self._by_id = merged
+        self._high_water_ms = max([self._high_water_ms] + [_updated_ms(c) for c in changed])
+
+    def sync(self, max_age_seconds=0):
+        with self._lock:
+            now = time.monotonic()
+            if self._synced_at is not None and now - self._synced_at < max_age_seconds:
+                return
+            if self._full_synced_at is None or now - self._full_synced_at >= FULL_RESYNC_SECONDS:
+                self._full_sync()
+            else:
+                self._delta_sync()
+            self._synced_at = time.monotonic()
+        _cache.clear()  # computed responses were built from the old contact set
+
+    def contacts(self):
+        self.sync(max_age_seconds=DATA_CACHE_TTL_SECONDS)
+        return sorted(self._by_id.values(), key=lambda c: c.get("dateAdded") or "", reverse=True)
 
 
 DATA_CACHE_TTL_SECONDS = 600
-_contacts_cache = []
 _opps_cache = {}
-_all_contacts_cache = {"fetchedAt": None, "contacts": []}
-_cold_outbound_contacts_cache = {"fetchedAt": None, "contacts": []}
+main_contacts = ContactStore(LOCATION_ID, API_KEY)
+cold_outbound_contacts = ContactStore(COLD_OUTBOUND_LOCATION_ID, COLD_OUTBOUND_API_KEY)
 
 
 def get_contacts_for(range_start):
-    now = time.monotonic()
-    _contacts_cache[:] = [c for c in _contacts_cache if now - c["fetchedAt"] < DATA_CACHE_TTL_SECONDS]
-    covering = [c for c in _contacts_cache if c["start"] <= range_start]
-    if covering:
-        best = max(covering, key=lambda c: c["start"])  # tightest covering fetch
-        return best["contacts"]
-    contacts = fetch_all_contacts(range_start)
-    contacts = [c for c in contacts if not is_excluded_contact(c)]
-    _contacts_cache.append({"start": range_start, "fetchedAt": now, "contacts": contacts})
-    return contacts
+    # Every caller filters by dateAdded itself, so the full contact set is a
+    # safe superset of the old "fetch back to range_start" behavior.
+    return get_all_contacts_cached()
 
 
 def _get_all_contacts_raw():
-    now = time.monotonic()
-    fetched_at = _all_contacts_cache["fetchedAt"]
-    if fetched_at is not None and now - fetched_at < DATA_CACHE_TTL_SECONDS:
-        return _all_contacts_cache["contacts"]
-    contacts = fetch_all_contacts_unbounded()
-    _all_contacts_cache["fetchedAt"] = now
-    _all_contacts_cache["contacts"] = contacts
-    return contacts
+    return main_contacts.contacts()
 
 
 def get_all_contacts_cached():
@@ -285,14 +328,7 @@ def get_cold_outbound_contacts_cached():
         raise ConfigError(
             "HIGHLEVEL_API_KEY_COLD_OUTBOUND / HIGHLEVEL_LOCATION_ID_COLD_OUTBOUND are not set. Add them to .env and restart the server."
         )
-    now = time.monotonic()
-    fetched_at = _cold_outbound_contacts_cache["fetchedAt"]
-    if fetched_at is not None and now - fetched_at < DATA_CACHE_TTL_SECONDS:
-        return _cold_outbound_contacts_cache["contacts"]
-    contacts = fetch_all_cold_outbound_contacts()
-    _cold_outbound_contacts_cache["fetchedAt"] = now
-    _cold_outbound_contacts_cache["contacts"] = contacts
-    return contacts
+    return cold_outbound_contacts.contacts()
 
 
 def get_opportunities_for(pipeline_id, stage_id):
@@ -837,32 +873,6 @@ def cached(key_parts, compute_fn):
     return result
 
 
-def clear_all_caches():
-    _cache.clear()
-    _contacts_cache.clear()
-    _opps_cache.clear()
-    _all_contacts_cache["fetchedAt"] = None
-    _all_contacts_cache["contacts"] = []
-    _cold_outbound_contacts_cache["fetchedAt"] = None
-    _cold_outbound_contacts_cache["contacts"] = []
-
-
-def _refresh_month_contacts():
-    today = datetime.now(BUSINESS_TZ).date()
-    month_start = today.replace(day=1)
-    contacts = fetch_all_contacts(month_start)
-    contacts = [c for c in contacts if not is_excluded_contact(c)]
-    now = time.monotonic()
-    _contacts_cache[:] = [c for c in _contacts_cache if c["start"] != month_start]
-    _contacts_cache.append({"start": month_start, "fetchedAt": now, "contacts": contacts})
-
-
-def _refresh_all_contacts():
-    contacts = fetch_all_contacts_unbounded()
-    _all_contacts_cache["fetchedAt"] = time.monotonic()
-    _all_contacts_cache["contacts"] = contacts
-
-
 def _refresh_opportunities():
     with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
         opps_by_rep = list(pool.map(lambda rep: fetch_all_opportunities(rep["pipelineId"], rep["closedWonStageId"]), REPS))
@@ -872,13 +882,18 @@ def _refresh_opportunities():
 
 
 def refresh_data_caches():
-    # Best-effort: one fetch failing (e.g. a transient HighLevel timeout)
-    # shouldn't stop the others from refreshing.
-    for fn in (_refresh_month_contacts, _refresh_all_contacts, _refresh_opportunities):
-        try:
-            fn()
-        except Exception:
-            pass
+    # Best-effort and parallel: one fetch failing (e.g. a transient HighLevel
+    # timeout) shouldn't stop the others from refreshing.
+    jobs = [main_contacts.sync, _refresh_opportunities]
+    if COLD_OUTBOUND_API_KEY and COLD_OUTBOUND_LOCATION_ID:
+        jobs.append(cold_outbound_contacts.sync)
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        for future in [pool.submit(fn) for fn in jobs]:
+            try:
+                future.result()
+            except Exception:
+                pass
+    _cache.clear()
 
 
 # Refreshes just under the 10-minute cache TTL so data is always replaced
@@ -1047,7 +1062,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/refresh":
-            clear_all_caches()
+            refresh_data_caches()
             self.send_json({"status": "refreshed"})
             return
 
@@ -1059,6 +1074,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/style.css":
             self.send_file(os.path.join(STATIC_DIR, "style.css"), "text/css")
+            return
+        if parsed.path == "/evo-logo.png":
+            self.send_file(os.path.join(STATIC_DIR, "evo-logo.png"), "image/png")
             return
 
         self.send_json({"error": "not found"}, 404)
