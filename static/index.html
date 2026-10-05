@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Evo Pest - Inside Sales Dashboard</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="apple-touch-icon" href="/favicon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/style.css" />
@@ -18,7 +20,7 @@
       <nav class="view-tabs">
         <button data-view="sales" class="view-tab">Sales Team Dashboard</button>
         <button data-view="leaderboard" class="view-tab active">Leaderboard</button>
-        <button data-view="marketing" class="view-tab">Marketing Campaign Dashboard</button>
+        <button data-view="sales-overview" class="view-tab">Sales Overview</button>
         <button data-view="cold-outbound" class="view-tab">Cold Outbound</button>
         <button data-view="inbound-calls" class="view-tab">Inbound Calls</button>
       </nav>
@@ -54,6 +56,14 @@
               </div>
               <div id="calendar-grid" class="calendar-grid"></div>
               <div id="calendar-hint" class="calendar-hint">Pick a start date</div>
+              <div class="calendar-inputs">
+                <label>From<input type="date" id="cal-start-input" /></label>
+                <label>To<input type="date" id="cal-end-input" /></label>
+              </div>
+              <div class="calendar-actions">
+                <button id="cal-cancel" class="calendar-action" type="button">Cancel</button>
+                <button id="cal-apply" class="calendar-action calendar-apply" type="button" disabled>Apply</button>
+              </div>
             </div>
           </span>
           <button data-range="year" class="range-btn">This Year</button>
@@ -150,8 +160,8 @@
       </div>
     </div>
 
-    <div id="view-marketing" class="hidden">
-      <p class="placeholder-note">Marketing campaign data isn't wired up yet — let me know what you'd like to see here.</p>
+    <div id="view-sales-overview" class="hidden">
+      <p class="placeholder-note">Sales overview data isn't wired up yet — let me know what you'd like to see here.</p>
     </div>
 
     <div id="view-cold-outbound" class="hidden">

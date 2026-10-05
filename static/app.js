@@ -90,19 +90,45 @@ function setActiveButton(range) {
 function applyRange(rangeKey, start, end) {
   currentRangeKey = rangeKey;
   currentRange = { start, end };
+  updateCustomButtonLabel();
   loadData();
 }
 
 // --- Custom range calendar popup ---
+// Calendar dates are local noon so formatting in Central Time never slips a day.
 let calendarViewDate = new Date();
 let calSelStart = null;
 let calSelEnd = null;
+let calHoverDay = null;
 
 function isSameDay(a, b) {
   return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+function atNoon(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+}
+
+function parseInputDate(value) {
+  if (!value) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d, 12);
+}
+
+function shortDate(d) {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 function showCalendarPopup() {
+  // Reopen on the last applied custom range so it can be tweaked.
+  if (currentRangeKey === "custom" && currentRange.start) {
+    calSelStart = atNoon(currentRange.start);
+    calSelEnd = atNoon(currentRange.end);
+  } else {
+    calSelStart = null;
+    calSelEnd = null;
+  }
+  calHoverDay = null;
   calendarViewDate = calSelStart ? new Date(calSelStart) : new Date();
   document.getElementById("calendar-popup").classList.remove("hidden");
   renderCalendar();
@@ -110,6 +136,16 @@ function showCalendarPopup() {
 
 function hideCalendarPopup() {
   document.getElementById("calendar-popup").classList.add("hidden");
+}
+
+function updateCustomButtonLabel() {
+  const btn = document.querySelector('.range-btn[data-range="custom"]');
+  if (currentRangeKey === "custom" && currentRange.start) {
+    const { start, end } = currentRange;
+    btn.textContent = isSameDay(start, end) ? shortDate(start) : `${shortDate(start)} – ${shortDate(end)}`;
+  } else {
+    btn.textContent = "Custom";
+  }
 }
 
 function renderCalendar() {
@@ -123,9 +159,23 @@ function renderCalendar() {
 
   if (!calSelStart) hint.textContent = "Pick a start date";
   else if (!calSelEnd) hint.textContent = "Pick an end date";
-  else hint.textContent = `${fmtDate(calSelStart)} to ${fmtDate(calSelEnd)}`;
+  else {
+    const days = daysBetween(calSelStart, calSelEnd) + 1;
+    hint.textContent = `${shortDate(calSelStart)} – ${shortDate(calSelEnd)} (${days} day${days === 1 ? "" : "s"})`;
+  }
 
-  const firstOfMonth = new Date(year, month, 1);
+  document.getElementById("cal-start-input").value = calSelStart ? fmtDate(calSelStart) : "";
+  document.getElementById("cal-end-input").value = calSelEnd ? fmtDate(calSelEnd) : "";
+  document.getElementById("cal-apply").disabled = !(calSelStart && calSelEnd);
+
+  // While only a start is picked, preview the range up to the hovered day.
+  let previewFrom = null;
+  let previewTo = null;
+  if (calSelStart && !calSelEnd && calHoverDay) {
+    [previewFrom, previewTo] = calHoverDay < calSelStart ? [calHoverDay, calSelStart] : [calSelStart, calHoverDay];
+  }
+
+  const firstOfMonth = new Date(year, month, 1, 12);
   const gridStart = addDays(firstOfMonth, -firstOfMonth.getDay());
   const today = new Date();
 
@@ -136,16 +186,23 @@ function renderCalendar() {
     cell.className = "calendar-day";
     cell.textContent = day.getDate();
 
-    const outside = day.getMonth() !== month;
-    if (outside) cell.classList.add("cal-outside");
+    if (day.getMonth() !== month) cell.classList.add("cal-outside");
     if (isSameDay(day, today)) cell.classList.add("cal-today");
     if (isSameDay(day, calSelStart)) cell.classList.add("cal-range-start");
     if (isSameDay(day, calSelEnd)) cell.classList.add("cal-range-end");
     if (calSelStart && calSelEnd && day > calSelStart && day < calSelEnd) cell.classList.add("cal-in-range");
+    if (previewFrom && day >= previewFrom && day <= previewTo && !isSameDay(day, calSelStart)) cell.classList.add("cal-preview");
 
-    if (!outside) {
-      cell.addEventListener("click", () => selectCalendarDay(day));
-    }
+    cell.addEventListener("click", (e) => {
+      e.stopPropagation(); // grid re-renders, so the target leaves the DOM
+      selectCalendarDay(day);
+    });
+    cell.addEventListener("mouseenter", () => {
+      if (calSelStart && !calSelEnd) {
+        calHoverDay = day;
+        renderCalendar();
+      }
+    });
     grid.appendChild(cell);
   }
 }
@@ -154,31 +211,72 @@ function selectCalendarDay(day) {
   if (!calSelStart || calSelEnd) {
     calSelStart = day;
     calSelEnd = null;
+  } else if (day < calSelStart) {
+    calSelEnd = calSelStart;
+    calSelStart = day;
   } else {
     calSelEnd = day;
   }
-
-  renderCalendar();
-
-  if (calSelStart && calSelEnd) {
-    hideCalendarPopup();
-    applyRange("custom", calSelStart, calSelEnd);
+  calHoverDay = null;
+  if (day.getMonth() !== calendarViewDate.getMonth()) {
+    calendarViewDate = new Date(day.getFullYear(), day.getMonth(), 1);
   }
+  renderCalendar();
 }
 
-document.getElementById("cal-prev-month").addEventListener("click", () => {
+function onCalendarInputChange() {
+  let start = parseInputDate(document.getElementById("cal-start-input").value);
+  let end = parseInputDate(document.getElementById("cal-end-input").value);
+  if (start && end && end < start) [start, end] = [end, start];
+  calSelStart = start;
+  calSelEnd = start ? end : null;
+  if (calSelStart) calendarViewDate = new Date(calSelStart);
+  renderCalendar();
+}
+
+document.getElementById("cal-start-input").addEventListener("change", onCalendarInputChange);
+document.getElementById("cal-end-input").addEventListener("change", onCalendarInputChange);
+
+document.getElementById("calendar-grid").addEventListener("mouseleave", () => {
+  if (calHoverDay) {
+    calHoverDay = null;
+    renderCalendar();
+  }
+});
+
+document.getElementById("cal-apply").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!(calSelStart && calSelEnd)) return;
+  hideCalendarPopup();
+  setActiveButton("custom");
+  applyRange("custom", calSelStart, calSelEnd);
+});
+
+document.getElementById("cal-cancel").addEventListener("click", (e) => {
+  e.stopPropagation();
+  hideCalendarPopup();
+  setActiveButton(currentRangeKey);
+});
+
+document.getElementById("cal-prev-month").addEventListener("click", (e) => {
+  e.stopPropagation();
   calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() - 1, 1);
   renderCalendar();
 });
 
-document.getElementById("cal-next-month").addEventListener("click", () => {
+document.getElementById("cal-next-month").addEventListener("click", (e) => {
+  e.stopPropagation();
   calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 1);
   renderCalendar();
 });
 
 document.addEventListener("click", (e) => {
   const wrap = document.querySelector(".custom-range-wrap");
-  if (wrap && !wrap.contains(e.target)) hideCalendarPopup();
+  const popup = document.getElementById("calendar-popup");
+  if (wrap && !wrap.contains(e.target) && !popup.classList.contains("hidden")) {
+    hideCalendarPopup();
+    setActiveButton(currentRangeKey);
+  }
 });
 
 document.querySelectorAll(".range-btn").forEach((btn) => {
@@ -186,8 +284,6 @@ document.querySelectorAll(".range-btn").forEach((btn) => {
     const range = btn.dataset.range;
     setActiveButton(range);
     if (range === "custom") {
-      calSelStart = null;
-      calSelEnd = null;
       showCalendarPopup();
       e.stopPropagation();
       return;
@@ -282,7 +378,7 @@ document.querySelectorAll(".view-tab").forEach((tab) => {
     document.querySelectorAll(".view-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const view = tab.dataset.view;
-    ["sales", "leaderboard", "marketing", "cold-outbound", "inbound-calls"].forEach((v) => {
+    ["sales", "leaderboard", "sales-overview", "cold-outbound", "inbound-calls"].forEach((v) => {
       document.getElementById(`view-${v}`).classList.toggle("hidden", view !== v);
     });
     document

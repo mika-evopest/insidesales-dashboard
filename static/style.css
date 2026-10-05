@@ -266,7 +266,7 @@ main { padding: 28px 32px 56px; max-width: 1600px; margin: 0 auto; }
   top: calc(100% + 8px);
   left: 0;
   z-index: 50;
-  width: 250px;
+  width: 270px;
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -320,6 +320,38 @@ main { padding: 28px 32px 56px; max-width: 1600px; margin: 0 auto; }
 .calendar-day.cal-range-start.cal-range-end { border-radius: 6px; }
 
 .calendar-hint { margin-top: 8px; font-size: 11px; color: var(--muted); text-align: center; }
+
+.calendar-day.cal-preview { background: var(--accent-bg); border-radius: 0; opacity: 0.7; }
+
+.calendar-inputs { display: flex; gap: 8px; margin-top: 10px; }
+.calendar-inputs label { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.calendar-inputs input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 5px;
+}
+
+.calendar-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.calendar-action {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.calendar-action:hover:not(:disabled) { background: var(--accent-bg); }
+.calendar-apply { background: var(--accent-2); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+.calendar-apply:hover:not(:disabled) { background: var(--accent-2); filter: brightness(1.06); }
+.calendar-apply:disabled { opacity: 0.5; cursor: default; }
 
 .loading-indicator { color: var(--accent); font-size: 13px; font-weight: 600; margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; }
 .loading-indicator::before {

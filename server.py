@@ -1078,6 +1078,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/evo-logo.png":
             self.send_file(os.path.join(STATIC_DIR, "evo-logo.png"), "image/png")
             return
+        if parsed.path in ("/favicon.png", "/favicon.ico"):
+            self.send_file(os.path.join(STATIC_DIR, "favicon.png"), "image/png")
+            return
 
         self.send_json({"error": "not found"}, 404)
 
