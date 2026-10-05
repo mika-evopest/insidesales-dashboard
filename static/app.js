@@ -148,17 +148,51 @@ function updateCustomButtonLabel() {
   }
 }
 
+// Day cells for the visible month. Hovering only repaints these in place:
+// rebuilding the grid mid-click swallows the click that picks the end date.
+let calCells = [];
+
 function renderCalendar() {
   const label = document.getElementById("cal-month-label");
   const grid = document.getElementById("calendar-grid");
-  const hint = document.getElementById("calendar-hint");
   const year = calendarViewDate.getFullYear();
   const month = calendarViewDate.getMonth();
 
   label.textContent = calendarViewDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
+  const firstOfMonth = new Date(year, month, 1, 12);
+  const gridStart = addDays(firstOfMonth, -firstOfMonth.getDay());
+
+  grid.innerHTML = "";
+  calCells = [];
+  for (let i = 0; i < 42; i++) {
+    const day = addDays(gridStart, i);
+    const cell = document.createElement("div");
+    cell.textContent = day.getDate();
+
+    cell.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectCalendarDay(day);
+    });
+    cell.addEventListener("mouseenter", () => {
+      if (calSelStart && !calSelEnd && !isSameDay(calHoverDay, day)) {
+        calHoverDay = day;
+        paintCalendar();
+      }
+    });
+    grid.appendChild(cell);
+    calCells.push({ cell, day });
+  }
+  paintCalendar();
+}
+
+function paintCalendar() {
+  const hint = document.getElementById("calendar-hint");
+  const month = calendarViewDate.getMonth();
+  const today = new Date();
+
   if (!calSelStart) hint.textContent = "Pick a start date";
-  else if (!calSelEnd) hint.textContent = "Pick an end date";
+  else if (!calSelEnd) hint.textContent = `From ${shortDate(calSelStart)} – now pick an end date`;
   else {
     const days = daysBetween(calSelStart, calSelEnd) + 1;
     hint.textContent = `${shortDate(calSelStart)} – ${shortDate(calSelEnd)} (${days} day${days === 1 ? "" : "s"})`;
@@ -175,39 +209,21 @@ function renderCalendar() {
     [previewFrom, previewTo] = calHoverDay < calSelStart ? [calHoverDay, calSelStart] : [calSelStart, calHoverDay];
   }
 
-  const firstOfMonth = new Date(year, month, 1, 12);
-  const gridStart = addDays(firstOfMonth, -firstOfMonth.getDay());
-  const today = new Date();
-
-  grid.innerHTML = "";
-  for (let i = 0; i < 42; i++) {
-    const day = addDays(gridStart, i);
-    const cell = document.createElement("div");
+  for (const { cell, day } of calCells) {
     cell.className = "calendar-day";
-    cell.textContent = day.getDate();
-
     if (day.getMonth() !== month) cell.classList.add("cal-outside");
     if (isSameDay(day, today)) cell.classList.add("cal-today");
     if (isSameDay(day, calSelStart)) cell.classList.add("cal-range-start");
     if (isSameDay(day, calSelEnd)) cell.classList.add("cal-range-end");
     if (calSelStart && calSelEnd && day > calSelStart && day < calSelEnd) cell.classList.add("cal-in-range");
     if (previewFrom && day >= previewFrom && day <= previewTo && !isSameDay(day, calSelStart)) cell.classList.add("cal-preview");
-
-    cell.addEventListener("click", (e) => {
-      e.stopPropagation(); // grid re-renders, so the target leaves the DOM
-      selectCalendarDay(day);
-    });
-    cell.addEventListener("mouseenter", () => {
-      if (calSelStart && !calSelEnd) {
-        calHoverDay = day;
-        renderCalendar();
-      }
-    });
-    grid.appendChild(cell);
   }
 }
 
+// First click picks the start, second click picks the end and applies the
+// range. If the second day is earlier, the two are swapped so start <= end.
 function selectCalendarDay(day) {
+  calHoverDay = null;
   if (!calSelStart || calSelEnd) {
     calSelStart = day;
     calSelEnd = null;
@@ -217,11 +233,19 @@ function selectCalendarDay(day) {
   } else {
     calSelEnd = day;
   }
-  calHoverDay = null;
+
+  if (calSelStart && calSelEnd) {
+    hideCalendarPopup();
+    setActiveButton("custom");
+    applyRange("custom", calSelStart, calSelEnd);
+    return;
+  }
   if (day.getMonth() !== calendarViewDate.getMonth()) {
     calendarViewDate = new Date(day.getFullYear(), day.getMonth(), 1);
+    renderCalendar();
+  } else {
+    paintCalendar();
   }
-  renderCalendar();
 }
 
 function onCalendarInputChange() {
@@ -240,7 +264,7 @@ document.getElementById("cal-end-input").addEventListener("change", onCalendarIn
 document.getElementById("calendar-grid").addEventListener("mouseleave", () => {
   if (calHoverDay) {
     calHoverDay = null;
-    renderCalendar();
+    paintCalendar();
   }
 });
 
