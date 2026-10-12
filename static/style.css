@@ -612,3 +612,7 @@ main { padding: 28px 32px 56px; max-width: 1600px; margin: 0 auto; }
 .call-pill.o-Sold { background: #1d6b34; color: #fff; }
 .call-log-table .kpi-sub { font-size: 12px; color: var(--muted); }
 .range-dates { text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); margin: 2px 0 6px; }
+.revenue-asof { text-align: center; font-size: 13px; color: var(--muted); margin: -4px 0 14px; }
+.revenue-total td { font-weight: 700; border-top: 2px solid var(--border); }
+#revenue-inbound-rep-table { margin-top: 18px; }
+#revenue-inbound-month-table { margin-top: 18px; }

@@ -23,6 +23,7 @@
         <button data-view="sales-overview" class="view-tab">Sales Overview</button>
         <button data-view="cold-outbound" class="view-tab">Cold Outbound</button>
         <button data-view="inbound-calls" class="view-tab">Inbound Calls</button>
+        <button data-view="revenue" class="view-tab">Revenue &amp; ACV</button>
       </nav>
     </div>
   </header>
@@ -248,6 +249,35 @@
       </div>
 
       <p id="inbound-calls-error-banner" class="error hidden"></p>
+    </div>
+    <div id="view-revenue" class="hidden">
+      <div class="dashboard-grid">
+        <div class="widget widget-wide">
+          <h2 id="revenue-title">Inside Sales</h2>
+          <p id="revenue-asof" class="revenue-asof"></p>
+          <div id="revenue-kpi-row" class="kpi-row"></div>
+        </div>
+
+        <div class="widget widget-wide">
+          <h2>By Sales Rep</h2>
+          <div id="revenue-rep-table" class="call-log-wrap"></div>
+        </div>
+
+        <div class="widget widget-wide">
+          <h2>By Month</h2>
+          <div id="revenue-month-table" class="call-log-wrap"></div>
+        </div>
+
+        <div class="widget widget-wide">
+          <h2>Inbound Leads &mdash; Sales in Revhawk</h2>
+          <p id="revenue-inbound-note" class="revenue-asof"></p>
+          <div id="revenue-inbound-kpi-row" class="kpi-row"></div>
+          <div id="revenue-inbound-rep-table" class="call-log-wrap"></div>
+          <div id="revenue-inbound-month-table" class="call-log-wrap"></div>
+        </div>
+      </div>
+
+      <p id="revenue-error-banner" class="error hidden"></p>
     </div>
   </main>
 

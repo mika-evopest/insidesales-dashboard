@@ -409,15 +409,94 @@ document.querySelectorAll(".view-tab").forEach((tab) => {
     document.querySelectorAll(".view-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const view = tab.dataset.view;
-    ["sales", "leaderboard", "sales-overview", "cold-outbound", "inbound-calls"].forEach((v) => {
+    ["sales", "leaderboard", "sales-overview", "cold-outbound", "inbound-calls", "revenue"].forEach((v) => {
       document.getElementById(`view-${v}`).classList.toggle("hidden", view !== v);
     });
     document
       .getElementById("range-toolbar")
       .classList.toggle("hidden", view !== "sales" && view !== "cold-outbound" && view !== "inbound-calls");
     if (view === "leaderboard") loadLeaderboard();
+    if (view === "revenue") loadRevenue();
   });
 });
+
+function sumRevenueRows(rows) {
+  const t = { sold: 0, acv: 0, arv: 0, initial: 0, recurring: 0, multiyear: 0, m18: 0, m24: 0, cancelled: 0, cancelledAcv: 0, serviced: 0, servicedAcv: 0, servicedActive: 0, servicedActiveAcv: 0 };
+  rows.forEach((r) => Object.keys(t).forEach((k) => (t[k] += r[k] || 0)));
+  return t;
+}
+
+function revenueTableRow(label, t) {
+  return `<tr>
+    <td>${escapeHTML(label)}</td>
+    <td class="num">${t.sold}</td>
+    <td class="num">${currency(t.acv)}</td>
+    <td class="num">${t.sold ? currency(t.acv / t.sold) : "—"}</td>
+    <td class="num">${t.serviced}</td>
+    <td class="num">${currency(t.servicedAcv)}</td>
+    <td class="num">${t.serviced ? currency(t.servicedAcv / t.serviced) : "—"}</td>
+    <td class="num">${pctLabel(rate(t.serviced, t.sold))}</td>
+    <td class="num">${t.servicedActive} (${currency(t.servicedActiveAcv)})</td>
+    <td class="num">${t.sold - t.serviced} (${currency(t.acv - t.servicedAcv)})</td>
+    <td class="num">${t.multiyear} (${pctLabel(rate(t.multiyear, t.recurring))})</td>
+    <td class="num">${t.cancelled} (${currency(t.cancelledAcv)})</td>
+  </tr>`;
+}
+
+function revenueTable(rowsHTML, totalHTML) {
+  return `<table class="deal-table call-log-table">
+    <thead><tr><th>&nbsp;</th><th class="num">Closed/Won</th><th class="num">Total Contract Value</th><th class="num">Avg Contract Value</th><th class="num">Serviced</th><th class="num">Serviced Total Contract Value</th><th class="num">Serviced Avg Contract Value</th><th class="num">Serviced %</th><th class="num">Serviced &amp; Active</th><th class="num">Not Serviced</th><th class="num">Multiyear</th><th class="num">Cancelled</th></tr></thead>
+    <tbody>${rowsHTML}${totalHTML}</tbody>
+  </table>`;
+}
+
+async function loadRevenue() {
+  const banner = document.getElementById("revenue-error-banner");
+  banner.classList.add("hidden");
+  try {
+    const data = await fetchJSON("/api/revenue-snapshot");
+    const team = sumRevenueRows(data.rows);
+    document.getElementById("revenue-title").textContent = `${data.periodLabel || "2026 Year to Date"} — Inside Sales`;
+    document.getElementById("revenue-asof").textContent =
+      `${data.reps.join(" + ")} · all lead sources${data.othersNote ? ` · ${data.othersNote}` : ""} · FieldRoutes data through ${formatDealDate(data.dataThrough)} (snapshot ${formatDealDate(data.asOf)})`;
+    document.getElementById("revenue-kpi-row").innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Closed/Won</div><div class="kpi-value">${team.sold}</div><div class="kpi-small">${currency(team.acv)} total contract value<br>${currency(team.acv / team.sold)} avg contract value</div></div>
+      <div class="kpi-card"><div class="kpi-label">Serviced</div><div class="kpi-value">${team.serviced}</div><div class="kpi-small">${currency(team.servicedAcv)} total contract value<br>${currency(team.servicedAcv / team.serviced)} avg contract value · ${pctLabel(rate(team.serviced, team.sold))} of closed/won</div></div>
+      <div class="kpi-card"><div class="kpi-label">Serviced &amp; Active</div><div class="kpi-value">${team.servicedActive}</div><div class="kpi-small">${currency(team.servicedActiveAcv)} total contract value · ${pctLabel(rate(team.servicedActive, team.sold))} of closed/won</div></div>
+      <div class="kpi-card"><div class="kpi-label">Not Serviced</div><div class="kpi-value">${team.sold - team.serviced}</div><div class="kpi-small">${currency(team.acv - team.servicedAcv)} ACV</div></div>
+      <div class="kpi-card"><div class="kpi-label">ARV</div><div class="kpi-value">${currency(team.arv)}</div><div class="kpi-small">${currency(team.initial)} initial revenue</div></div>
+      <div class="kpi-card"><div class="kpi-label">Multiyear</div><div class="kpi-value">${pctLabel(rate(team.multiyear, team.recurring))}</div><div class="kpi-small">${team.multiyear} of ${team.recurring} recurring (${team.m24}×24mo, ${team.m18}×18mo)</div></div>
+      <div class="kpi-card"><div class="kpi-label">Still Active</div><div class="kpi-value">${team.sold - team.cancelled}</div><div class="kpi-small">${team.cancelled} cancelled (${currency(team.cancelledAcv)} ACV)</div></div>
+    `;
+    const repRows = data.reps.map((rep) => revenueTableRow(rep, sumRevenueRows(data.rows.filter((r) => r.rep === rep)))).join("");
+    document.getElementById("revenue-rep-table").innerHTML = revenueTable(repRows, revenueTableRow("Team", team).replace("<tr>", '<tr class="revenue-total">'));
+    const months = [...new Set(data.rows.map((r) => r.month))].sort();
+    const monthLabel = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    const monthRows = months.map((m) => revenueTableRow(monthLabel(m), sumRevenueRows(data.rows.filter((r) => r.month === m)))).join("");
+    document.getElementById("revenue-month-table").innerHTML = revenueTable(monthRows, revenueTableRow("Total", team).replace("<tr>", '<tr class="revenue-total">'));
+
+    const inbound = data.inbound;
+    if (inbound) {
+      const it = sumRevenueRows(inbound.rows);
+      document.getElementById("revenue-inbound-note").textContent = `${inbound.label}. ${inbound.othersNote}.`;
+      document.getElementById("revenue-inbound-kpi-row").innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">Closed/Won</div><div class="kpi-value">${it.sold}</div><div class="kpi-small">${currency(it.acv)} total contract value<br>${currency(it.acv / it.sold)} avg contract value</div></div>
+        <div class="kpi-card"><div class="kpi-label">Serviced</div><div class="kpi-value">${it.serviced}</div><div class="kpi-small">${currency(it.servicedAcv)} total contract value<br>${currency(it.servicedAcv / it.serviced)} avg contract value · ${pctLabel(rate(it.serviced, it.sold))}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Serviced &amp; Active</div><div class="kpi-value">${it.servicedActive}</div><div class="kpi-small">${currency(it.servicedActiveAcv)} total contract value · ${pctLabel(rate(it.servicedActive, it.sold))}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Multiyear</div><div class="kpi-value">${pctLabel(rate(it.multiyear, it.recurring))}</div><div class="kpi-small">${it.multiyear} of ${it.recurring} recurring</div></div>
+        <div class="kpi-card"><div class="kpi-label">Cancelled</div><div class="kpi-value">${it.cancelled}</div><div class="kpi-small">${currency(it.cancelledAcv)} ACV</div></div>
+      `;
+      const inRepRows = inbound.reps.map((rep) => revenueTableRow(rep, sumRevenueRows(inbound.rows.filter((r) => r.rep === rep)))).join("");
+      document.getElementById("revenue-inbound-rep-table").innerHTML = revenueTable(inRepRows, revenueTableRow("Total", it).replace("<tr>", '<tr class="revenue-total">'));
+      const inMonths = [...new Set(inbound.rows.map((r) => r.month))].sort();
+      const inMonthRows = inMonths.map((m) => revenueTableRow(monthLabel(m), sumRevenueRows(inbound.rows.filter((r) => r.month === m)))).join("");
+      document.getElementById("revenue-inbound-month-table").innerHTML = revenueTable(inMonthRows, revenueTableRow("Total", it).replace("<tr>", '<tr class="revenue-total">'));
+    }
+  } catch (e) {
+    banner.classList.remove("hidden");
+    banner.textContent = `Revenue data: ${e.message}`;
+  }
+}
 
 function showError(msg) {
   const banner = document.getElementById("error-banner");

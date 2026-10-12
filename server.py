@@ -15,6 +15,9 @@ STATIC_DIR = os.path.join(HERE, "static")
 ENV_PATH = os.path.join(HERE, ".env")
 POWER_DIALER_HISTORY_PATH = os.path.join(HERE, "power_dialer_history.json")
 INBOUND_CALL_AUDIT_PATH = os.path.join(HERE, "inbound_call_audit.json")
+# FieldRoutes revenue/ACV numbers aren't reachable from here (they live in
+# Revhawk's BigQuery), so this is a snapshot that gets refreshed by hand.
+REVENUE_SNAPSHOT_PATH = os.path.join(HERE, "revenue_snapshot.json")
 
 API_BASE = "https://services.leadconnectorhq.com"
 API_VERSION = "2021-07-28"
@@ -1186,6 +1189,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 400)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
+            return
+
+        if parsed.path == "/api/revenue-snapshot":
+            if not os.path.exists(REVENUE_SNAPSHOT_PATH):
+                self.send_json({"error": "No revenue snapshot yet."}, 404)
+                return
+            with open(REVENUE_SNAPSHOT_PATH) as f:
+                self.send_json(json.load(f))
             return
 
         if parsed.path == "/api/refresh":
