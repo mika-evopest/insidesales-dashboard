@@ -450,6 +450,52 @@ function revenueTable(rowsHTML, totalHTML) {
   </table>`;
 }
 
+let revenueSales = [];
+
+function renderSalesList() {
+  const el = document.getElementById("sales-list-table");
+  const rep = document.getElementById("sales-list-rep").value;
+  const status = document.getElementById("sales-list-status").value;
+  const list = revenueSales.filter((s) => {
+    if (rep !== "all" && s.group !== rep) return false;
+    if (status === "servicedActive") return s.serviced && !s.cancelled;
+    if (status === "notServiced") return !s.serviced;
+    if (status === "cancelled") return s.cancelled;
+    if (status === "multiyear") return s.months >= 18;
+    if (status === "inbound") return s.inbound;
+    return true;
+  });
+  const total = list.reduce((sum, s) => sum + s.contractValue, 0);
+  document.getElementById("sales-list-count").textContent = `${list.length} sales · ${currency(total)} total contract value`;
+  if (!list.length) {
+    el.innerHTML = `<p class="deal-table-empty">No sales match.</p>`;
+    return;
+  }
+  const statusText = (s) =>
+    s.serviced ? (s.cancelled ? "Serviced, then cancelled" : "Serviced & active") : s.cancelled ? "Cancelled before service" : `Not serviced (${s.initialStatus || "—"})`;
+  el.innerHTML = `<table class="deal-table call-log-table">
+    <thead><tr><th>Sold</th><th>Customer</th><th>Rep</th><th>Plan</th><th>City</th><th class="num">Contract Value</th><th class="num">ARV</th><th class="num">Months</th><th>Status</th></tr></thead>
+    <tbody>${list
+      .map(
+        (s) => `<tr>
+          <td class="nowrap">${formatDealDate(s.sold)}</td>
+          <td>${escapeHTML(s.customer)}${s.inbound ? ' <span class="call-pill">Inbound</span>' : ""}</td>
+          <td class="nowrap">${escapeHTML(s.rep)}</td>
+          <td>${escapeHTML(s.plan || "")}</td>
+          <td class="nowrap">${escapeHTML(s.city || "")}</td>
+          <td class="num">${currency(s.contractValue)}</td>
+          <td class="num">${currency(s.arv)}</td>
+          <td class="num">${s.months ?? "—"}</td>
+          <td class="nowrap">${statusText(s)}</td>
+        </tr>`
+      )
+      .join("")}</tbody>
+  </table>`;
+}
+
+document.getElementById("sales-list-rep").addEventListener("change", renderSalesList);
+document.getElementById("sales-list-status").addEventListener("change", renderSalesList);
+
 async function loadRevenue() {
   const banner = document.getElementById("revenue-error-banner");
   banner.classList.add("hidden");
@@ -474,6 +520,13 @@ async function loadRevenue() {
     const monthLabel = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" });
     const monthRows = months.map((m) => revenueTableRow(monthLabel(m), sumRevenueRows(data.rows.filter((r) => r.month === m)))).join("");
     document.getElementById("revenue-month-table").innerHTML = revenueTable(monthRows, revenueTableRow("Total", team).replace("<tr>", '<tr class="revenue-total">'));
+
+    revenueSales = data.sales || [];
+    const repSelect = document.getElementById("sales-list-rep");
+    if (repSelect.options.length === 1) {
+      data.reps.forEach((r) => repSelect.add(new Option(r, r)));
+    }
+    renderSalesList();
 
     const inbound = data.inbound;
     if (inbound) {

@@ -269,6 +269,25 @@
         </div>
 
         <div class="widget widget-wide">
+          <div class="call-log-header">
+            <h2>Sales List</h2>
+            <div>
+              <select id="sales-list-rep" class="call-log-filter"><option value="all">All reps</option></select>
+              <select id="sales-list-status" class="call-log-filter">
+                <option value="all">All statuses</option>
+                <option value="servicedActive">Serviced &amp; active</option>
+                <option value="notServiced">Not serviced</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="multiyear">Multiyear</option>
+                <option value="inbound">Inbound leads</option>
+              </select>
+            </div>
+          </div>
+          <p id="sales-list-count" class="revenue-asof"></p>
+          <div id="sales-list-table" class="call-log-wrap"></div>
+        </div>
+
+        <div class="widget widget-wide">
           <h2>Inbound Leads &mdash; Sales in Revhawk</h2>
           <p id="revenue-inbound-note" class="revenue-asof"></p>
           <div id="revenue-inbound-kpi-row" class="kpi-row"></div>
