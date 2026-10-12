@@ -91,7 +91,14 @@ function applyRange(rangeKey, start, end) {
   currentRangeKey = rangeKey;
   currentRange = { start, end };
   updateCustomButtonLabel();
+  updateRangeDates();
   loadData();
+}
+
+function updateRangeDates() {
+  const { start, end } = currentRange;
+  const fmt = (d) => d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  document.getElementById("range-dates").textContent = isSameDay(start, end) ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
 }
 
 // --- Custom range calendar popup ---
