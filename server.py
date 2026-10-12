@@ -21,6 +21,36 @@ REVENUE_SNAPSHOT_PATH = os.path.join(HERE, "revenue_snapshot.json")
 if not os.path.exists(REVENUE_SNAPSHOT_PATH) and os.path.exists("/etc/secrets/revenue_snapshot.json"):
     # On Render the snapshot is uploaded as a Secret File, since the repo is public.
     REVENUE_SNAPSHOT_PATH = "/etc/secrets/revenue_snapshot.json"
+# Preferred source: the private data repo, refreshed by a scheduled job.
+REVENUE_SNAPSHOT_TTL_SECONDS = 1800
+_revenue_snapshot_cache = {"fetchedAt": 0, "data": None}
+
+
+def load_revenue_snapshot():
+    # Private data repo first (when a token is configured), cached for 30 min;
+    # falls back to a local/secret file so local dev keeps working.
+    token = os.environ.get("DATA_REPO_TOKEN", "")
+    repo = os.environ.get("DATA_REPO", "mikam013/insidesales-data")
+    if token:
+        now = time.monotonic()
+        if _revenue_snapshot_cache["data"] is None or now - _revenue_snapshot_cache["fetchedAt"] > REVENUE_SNAPSHOT_TTL_SECONDS:
+            req = urllib.request.Request(f"https://api.github.com/repos/{repo}/contents/revenue_snapshot.json")
+            req.add_header("Authorization", f"Bearer {token}")
+            req.add_header("Accept", "application/vnd.github.raw")
+            req.add_header("User-Agent", "evo-dashboard/1.0")
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    _revenue_snapshot_cache["data"] = json.loads(resp.read().decode("utf-8"))
+                    _revenue_snapshot_cache["fetchedAt"] = now
+            except Exception:
+                if _revenue_snapshot_cache["data"] is None and not os.path.exists(REVENUE_SNAPSHOT_PATH):
+                    raise
+        if _revenue_snapshot_cache["data"] is not None:
+            return _revenue_snapshot_cache["data"]
+    if not os.path.exists(REVENUE_SNAPSHOT_PATH):
+        return None
+    with open(REVENUE_SNAPSHOT_PATH) as f:
+        return json.load(f)
 
 API_BASE = "https://services.leadconnectorhq.com"
 API_VERSION = "2021-07-28"
@@ -1195,11 +1225,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/revenue-snapshot":
-            if not os.path.exists(REVENUE_SNAPSHOT_PATH):
+            try:
+                snapshot = load_revenue_snapshot()
+            except Exception as e:
+                self.send_json({"error": f"Could not load revenue snapshot: {e}"}, 500)
+                return
+            if snapshot is None:
                 self.send_json({"error": "No revenue snapshot yet."}, 404)
                 return
-            with open(REVENUE_SNAPSHOT_PATH) as f:
-                self.send_json(json.load(f))
+            self.send_json(snapshot)
             return
 
         if parsed.path == "/api/refresh":
