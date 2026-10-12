@@ -970,6 +970,87 @@ async function loadInboundCalls(start, end) {
   }
 }
 
+function escapeHTML(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+}
+
+function countsToBars(counts) {
+  return Object.keys(counts || {}).map((name) => ({ name: name === "null" ? "—" : name, count: counts[name] }));
+}
+
+function formatCallDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+let callLogData = null;
+
+function renderCallLogTable() {
+  const el = document.getElementById("call-log-table");
+  if (!callLogData) return;
+  const filter = document.getElementById("call-log-filter").value;
+  const calls = callLogData.calls.filter((c) => {
+    if (filter === "Sales lead") return c.callType === "Sales lead";
+    if (filter === "conversations") return c.callType && c.callType !== "No conversation";
+    return true;
+  });
+  if (!calls.length) {
+    el.innerHTML = `<p class="deal-table-empty">No inbound calls in this date range.</p>`;
+    return;
+  }
+  const contactUrl = (id) => `https://app.gohighlevel.com/v2/location/${callLogData.locationId}/contacts/detail/${id}`;
+  const pill = (cls, text) => (text && text !== "N/A" ? `<span class="call-pill ${cls}">${escapeHTML(text)}</span>` : "");
+  const rows = calls
+    .map(
+      (c) => `<tr>
+        <td class="nowrap">${formatDealDate(c.date)}<br><span class="kpi-sub">${escapeHTML(c.time)}</span></td>
+        <td>${c.contactId ? `<a href="${contactUrl(c.contactId)}" target="_blank" rel="noopener">${escapeHTML(c.name)}</a>` : escapeHTML(c.name)}</td>
+        <td class="num">${formatCallDuration(c.duration)}</td>
+        <td class="nowrap">${c.audited ? escapeHTML(c.handledBy) : `<span class="kpi-sub">Not audited</span>`}</td>
+        <td class="nowrap">${escapeHTML(c.callType || "")}${c.pest ? `<br><span class="kpi-sub">${escapeHTML(c.pest)}</span>` : ""}</td>
+        <td>${pill(`q-${c.qualified}`, c.qualified)}</td>
+        <td>${pill(`o-${c.outcome}`, c.outcome)}${c.price ? `<br><span class="kpi-sub">${escapeHTML(c.price)}</span>` : ""}</td>
+        <td class="call-summary">${escapeHTML(c.summary || "")}${c.notes ? `<span class="call-notes">${escapeHTML(c.notes)}</span>` : ""}</td>
+      </tr>`
+    )
+    .join("");
+  el.innerHTML = `
+    <table class="deal-table call-log-table">
+      <thead><tr><th>When</th><th>Caller</th><th class="num">Length</th><th>Handled By</th><th>Type</th><th>Qualified</th><th>Outcome</th><th>Summary</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+document.getElementById("call-log-filter").addEventListener("change", renderCallLogTable);
+
+async function loadInboundCallLog(start, end) {
+  const banner = document.getElementById("inbound-calls-error-banner");
+  try {
+    const data = await fetchJSON(`/api/inbound-call-log?start=${start}&end=${end}`);
+    callLogData = data;
+    const auditNote =
+      data.audited < data.totalCalls ? `<div class="kpi-small">${data.totalCalls - data.audited} not audited yet</div>` : "";
+    document.getElementById("call-log-kpi-row").innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Inbound Calls</div><div class="kpi-value">${data.totalCalls}</div><div class="kpi-small">${data.uniqueCallers} unique callers</div></div>
+      <div class="kpi-card"><div class="kpi-label">Connected</div><div class="kpi-value">${data.connected}</div><div class="kpi-small">${data.talkMinutes} min talk time</div></div>
+      <div class="kpi-card"><div class="kpi-label">Sales Lead Calls</div><div class="kpi-value">${data.salesLeads}</div>${auditNote}</div>
+      <div class="kpi-card"><div class="kpi-label">Qualified</div><div class="kpi-value">${data.qualified}</div><div class="kpi-small">${pctLabel(rate(data.qualified, data.salesLeads))} of sales leads</div></div>
+      <div class="kpi-card"><div class="kpi-label">Sold on the Call</div><div class="kpi-value">${data.sold}</div><div class="kpi-small">${pctLabel(rate(data.sold, data.qualified))} of qualified</div></div>
+    `;
+    const countChart = (id, counts) =>
+      renderBarChart(id, countsToBars(counts), { valueOf: (r) => r.count, formatValue: (item) => `${item.value}` });
+    countChart("call-handler-chart", data.byHandler);
+    countChart("call-type-chart", data.byCallType);
+    countChart("call-outcome-chart", data.byOutcome);
+    renderCallLogTable();
+  } catch (e) {
+    banner.classList.remove("hidden");
+    banner.textContent = `Inbound call log: ${e.message}`;
+  }
+}
+
 let loadToken = 0;
 
 function setLoading(isLoading) {
@@ -991,6 +1072,7 @@ async function loadData() {
   loadPowerDialer(start, end); // fire independently — can be slow on a cold cache, shouldn't block the rest
   loadColdOutbound(start, end); // fire independently — same reasoning
   loadInboundCalls(start, end); // fire independently — same reasoning
+  loadInboundCallLog(start, end); // fire independently — same reasoning
 
   try {
     let curr;

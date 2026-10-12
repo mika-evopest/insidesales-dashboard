@@ -209,6 +209,40 @@
             <div id="inbound-close-rate-chart" class="bar-wrap"></div>
           </div>
         </div>
+
+        <div class="widget widget-wide">
+          <h2>Inbound Call Activity</h2>
+          <div id="call-log-kpi-row" class="kpi-row"></div>
+        </div>
+
+        <div class="dashboard-row dashboard-row-3">
+          <div class="widget">
+            <h2>Calls Handled By</h2>
+            <div id="call-handler-chart" class="bar-wrap"></div>
+          </div>
+
+          <div class="widget">
+            <h2>Call Type</h2>
+            <div id="call-type-chart" class="bar-wrap"></div>
+          </div>
+
+          <div class="widget">
+            <h2>Sales Call Outcome</h2>
+            <div id="call-outcome-chart" class="bar-wrap"></div>
+          </div>
+        </div>
+
+        <div class="widget widget-wide hidden">
+          <div class="call-log-header">
+            <h2>Call Log</h2>
+            <select id="call-log-filter" class="call-log-filter">
+              <option value="all">All calls</option>
+              <option value="Sales lead">Sales leads only</option>
+              <option value="conversations">Conversations only</option>
+            </select>
+          </div>
+          <div id="call-log-table" class="call-log-wrap"></div>
+        </div>
       </div>
 
       <p id="inbound-calls-error-banner" class="error hidden"></p>

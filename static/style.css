@@ -594,3 +594,20 @@ main { padding: 28px 32px 56px; max-width: 1600px; margin: 0 auto; }
 
 .leaderboard-value { font-size: 20px; font-weight: 800; flex-shrink: 0; min-width: 90px; text-align: right; letter-spacing: -0.01em; }
 .leaderboard-rate { font-size: 15px; color: var(--muted); flex-shrink: 0; min-width: 55px; text-align: right; }
+
+.call-log-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.call-log-filter { font: inherit; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; }
+.call-log-wrap { overflow-x: auto; }
+.call-log-table td, .call-log-table th { text-align: left !important; vertical-align: top; }
+.call-log-table td.num, .call-log-table th.num { text-align: right !important; white-space: nowrap; }
+.call-log-table td.nowrap { white-space: nowrap; }
+.call-log-table .call-summary { min-width: 260px; color: var(--muted); }
+.call-log-table .call-notes { display: block; margin-top: 4px; font-style: italic; }
+.call-log-table a { color: inherit; font-weight: 600; text-decoration: none; }
+.call-log-table a:hover { text-decoration: underline; }
+.call-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--accent-bg); white-space: nowrap; }
+.call-pill.q-Qualified { background: #dcf3e1; color: #1d6b34; }
+.call-pill.q-Unqualified { background: #fbe2e2; color: #8a2222; }
+.call-pill.q-Unknown { background: #fff1cc; color: #7a5a00; }
+.call-pill.o-Sold { background: #1d6b34; color: #fff; }
+.call-log-table .kpi-sub { font-size: 12px; color: var(--muted); }

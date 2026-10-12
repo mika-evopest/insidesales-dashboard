@@ -14,6 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "static")
 ENV_PATH = os.path.join(HERE, ".env")
 POWER_DIALER_HISTORY_PATH = os.path.join(HERE, "power_dialer_history.json")
+INBOUND_CALL_AUDIT_PATH = os.path.join(HERE, "inbound_call_audit.json")
 
 API_BASE = "https://services.leadconnectorhq.com"
 API_VERSION = "2021-07-28"
@@ -352,6 +353,7 @@ def rep_sales(rep, start, end, allowed_contact_ids=None):
     count = 0
     value = 0.0
     missing_closed_date = 0
+    value_by_contact = {}
     for opp in opps:
         if is_test_opportunity(opp) or opp.get("contactId") in excluded_ids:
             continue
@@ -365,7 +367,10 @@ def rep_sales(rep, start, end, allowed_contact_ids=None):
             closed = utc_date_only(closed_dt)
         if in_range(closed, start, end):
             count += 1
-            value += float(opp.get("monetaryValue") or 0)
+            opp_value = float(opp.get("monetaryValue") or 0)
+            value += opp_value
+            contact_id = opp.get("contactId")
+            value_by_contact[contact_id] = max(value_by_contact.get(contact_id, 0), opp_value)
             if missing:
                 missing_closed_date += 1
     return {
@@ -373,6 +378,7 @@ def rep_sales(rep, start, end, allowed_contact_ids=None):
         "count": count,
         "value": round(value, 2),
         "missingClosedDate": missing_closed_date,
+        "valueByContact": value_by_contact,
     }
 
 
@@ -412,8 +418,7 @@ def handle_inbound_rep_deals(rep_name, start, end):
     rep = next((r for r in REPS if r["name"] == rep_name), None)
     if not rep:
         raise ValueError(f"Unknown rep: {rep_name}")
-    inbound_contact_ids = {c.get("id") for c in get_all_contacts_cached() if is_inbound_source(c.get("source"))}
-    return {"rep": rep_name, "deals": rep_deals(rep, start, end, allowed_contact_ids=inbound_contact_ids)}
+    return {"rep": rep_name, "deals": rep_deals(rep, start, end, allowed_contact_ids=all_inbound_contact_ids())}
 
 
 def rep_qualified_lead_list(contacts, rep_name, start, end):
@@ -448,6 +453,8 @@ def handle_inbound_qualified_leads(rep_name, start, end):
 def handle_sales(start, end):
     with ThreadPoolExecutor(max_workers=len(REPS)) as pool:
         reps_out = list(pool.map(lambda rep: rep_sales(rep, start, end), REPS))
+    for r in reps_out:
+        r.pop("valueByContact", None)
     return {
         "reps": reps_out,
         "totals": {
@@ -645,7 +652,13 @@ def compute_period_metrics(start, end, contacts, allowed_contact_ids=None):
             "pctOfTotal": pct_of_total,
         })
 
-    total_closed_count = sum(r["closedCount"] for r in reps_out)
+    # A contact with Closed Won deals in two reps' pipelines is one sale, not
+    # two — totals count unique contacts (keeping the larger deal value).
+    unique_sales = {}
+    for sales in sales_list:
+        for contact_id, v in sales["valueByContact"].items():
+            unique_sales[contact_id] = max(unique_sales.get(contact_id, 0), v)
+    total_closed_count = len(unique_sales)
     total_leads = count_leads(contacts, start, end)
     total_qualified = count_qualified_leads(contacts, start, end)
     overall_close_rate = round(total_closed_count / total_qualified * 100, 1) if total_qualified else None
@@ -655,7 +668,7 @@ def compute_period_metrics(start, end, contacts, allowed_contact_ids=None):
     return {
         "reps": reps_out,
         "totals": {
-            "closedValue": round(total_value, 2),
+            "closedValue": round(sum(unique_sales.values()), 2),
             "closedCount": total_closed_count,
             "leads": total_leads,
             "qualifiedLeads": total_qualified,
@@ -673,15 +686,114 @@ def handle_performance(start, end):
     return compute_period_metrics(start, end, contacts)
 
 
+def all_inbound_contact_ids():
+    return {c.get("id") for c in get_all_contacts_cached() if is_inbound_source(c.get("source"))}
+
+
 def handle_inbound_calls(start, end):
     contacts = get_contacts_for(start)
     inbound_contacts = [c for c in contacts if is_inbound_source(c.get("source"))]
-    # Sold-contract counts come from opportunities, not the (dateAdded-windowed)
-    # contacts list above, so build the inbound contact-id set from the full,
-    # unbounded contact history — a deal can close for a contact added well
-    # before `start`.
-    inbound_contact_ids = {c.get("id") for c in get_all_contacts_cached() if is_inbound_source(c.get("source"))}
-    return compute_period_metrics(start, end, inbound_contacts, allowed_contact_ids=inbound_contact_ids)
+    # Leads/qualified count by when the contact was created; sales count by
+    # the deal's sold (Closed) date, for any inbound lead whenever it came in.
+    return compute_period_metrics(start, end, inbound_contacts, allowed_contact_ids=all_inbound_contact_ids())
+
+
+def fetch_call_messages(start, end):
+    # Every call message in the range, newest first. Inbound calls mostly come
+    # in as TYPE_IVR_CALL (phone menu), so filter on direction, not type.
+    start_utc = datetime.combine(start, datetime.min.time(), BUSINESS_TZ).astimezone(timezone.utc)
+    end_utc = datetime.combine(end + timedelta(days=1), datetime.min.time(), BUSINESS_TZ).astimezone(timezone.utc)
+    params = {
+        "locationId": LOCATION_ID,
+        "channel": "Call",
+        "startDate": start_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "endDate": end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "limit": 100,
+    }
+    messages = []
+    seen = set()
+    while True:
+        data = hl_request("/conversations/messages/export", params)
+        page = [m for m in data.get("messages", []) if m.get("id") not in seen]
+        for m in page:
+            seen.add(m["id"])
+        messages.extend(page)
+        cursor = data.get("nextCursor")
+        if not page or not cursor:
+            return messages
+        params["cursor"] = cursor
+
+
+def load_inbound_call_audit():
+    # Per-call audit (who handled it, call type, qualified, outcome) read from
+    # the transcripts, keyed by message id. Calls not in here show as unaudited.
+    if not os.path.exists(INBOUND_CALL_AUDIT_PATH):
+        return {}
+    with open(INBOUND_CALL_AUDIT_PATH) as f:
+        return json.load(f)
+
+
+def handle_inbound_call_log(start, end):
+    audit = load_inbound_call_audit()
+    contacts_by_id = {c.get("id"): c for c in get_all_contacts_cached()}
+    calls = []
+    for m in fetch_call_messages(start, end):
+        if m.get("direction") != "inbound":
+            continue
+        contact = contacts_by_id.get(m.get("contactId")) or {}
+        if not is_inbound_source(contact.get("source")):
+            continue
+        # Only leads created in the selected range — calls from older
+        # contacts belong to the period those leads came in.
+        if not in_range(local_date(parse_date(contact.get("dateAdded"))), start, end):
+            continue
+        call_meta = (m.get("meta") or {}).get("call") or {}
+        added = parse_date(m.get("dateAdded"))
+        name = " ".join(filter(None, [contact.get("firstName"), contact.get("lastName")])) or m.get("from") or "Unknown caller"
+        a = audit.get(m["id"]) or {}
+        calls.append({
+            "id": m["id"],
+            "contactId": m.get("contactId"),
+            "name": name,
+            "source": contact.get("source"),
+            "date": local_date(added).isoformat() if added else None,
+            "time": added.astimezone(BUSINESS_TZ).strftime("%-I:%M %p") if added else None,
+            "duration": call_meta.get("duration") or 0,
+            "status": call_meta.get("status"),
+            "audited": bool(a),
+            "handledBy": a.get("handledBy"),
+            "callType": a.get("callType"),
+            "qualified": a.get("qualified"),
+            "outcome": a.get("outcome"),
+            "pest": a.get("pest"),
+            "price": a.get("price"),
+            "summary": a.get("summary"),
+            "notes": a.get("notes"),
+        })
+
+    def tally(key):
+        counts = {}
+        for c in calls:
+            if c["audited"]:
+                counts[c[key]] = counts.get(c[key], 0) + 1
+        return counts
+
+    sales_leads = [c for c in calls if c["callType"] == "Sales lead"]
+    return {
+        "totalCalls": len(calls),
+        "connected": sum(1 for c in calls if c["status"] == "completed"),
+        "talkMinutes": round(sum(c["duration"] for c in calls) / 60),
+        "uniqueCallers": len({c["contactId"] for c in calls if c["contactId"]}),
+        "audited": sum(1 for c in calls if c["audited"]),
+        "salesLeads": len(sales_leads),
+        "qualified": sum(1 for c in sales_leads if c["qualified"] == "Qualified"),
+        "sold": sum(1 for c in calls if c["outcome"] == "Sold"),
+        "byHandler": tally("handledBy"),
+        "byCallType": tally("callType"),
+        "byOutcome": {k: v for k, v in tally("outcome").items() if k not in (None, "N/A")},
+        "locationId": LOCATION_ID,
+        "calls": calls,
+    }
 
 
 def handle_performance_compare(start, end, prev_start, prev_end):
@@ -994,6 +1106,21 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(cached(("inbound-calls", start, end), lambda: handle_inbound_calls(start, end)))
                 else:
                     self.send_json(cached(("performance", start, end), lambda: handle_performance(start, end)))
+            except ConfigError as e:
+                self.send_json({"error": str(e)}, 400)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 500)
+            return
+
+        if parsed.path == "/api/inbound-call-log":
+            try:
+                start = datetime.fromisoformat(qs["start"][0]).date()
+                end = datetime.fromisoformat(qs["end"][0]).date()
+            except (KeyError, ValueError):
+                self.send_json({"error": "start and end query params (YYYY-MM-DD) are required"}, 400)
+                return
+            try:
+                self.send_json(cached(("inbound-call-log", start, end), lambda: handle_inbound_call_log(start, end)))
             except ConfigError as e:
                 self.send_json({"error": str(e)}, 400)
             except Exception as e:
