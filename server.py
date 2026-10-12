@@ -18,6 +18,9 @@ INBOUND_CALL_AUDIT_PATH = os.path.join(HERE, "inbound_call_audit.json")
 # FieldRoutes revenue/ACV numbers aren't reachable from here (they live in
 # Revhawk's BigQuery), so this is a snapshot that gets refreshed by hand.
 REVENUE_SNAPSHOT_PATH = os.path.join(HERE, "revenue_snapshot.json")
+if not os.path.exists(REVENUE_SNAPSHOT_PATH) and os.path.exists("/etc/secrets/revenue_snapshot.json"):
+    # On Render the snapshot is uploaded as a Secret File, since the repo is public.
+    REVENUE_SNAPSHOT_PATH = "/etc/secrets/revenue_snapshot.json"
 
 API_BASE = "https://services.leadconnectorhq.com"
 API_VERSION = "2021-07-28"
